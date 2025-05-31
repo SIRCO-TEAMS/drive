@@ -934,18 +934,22 @@
       try {
         const resp = await fetch(apiUrl('/api/limit/' + encodeURIComponent(user)) + '?_=' + Date.now());
         const data = await resp.json();
-        // Always use the returned values, fallback to 0 if missing
+        // Log quota data to browser console for debugging
+        console.log('[Quota] API response:', data);
         let used = Number(data.usedGB) || 0;
         let limit = Number(data.limitGB) || 0;
         userQuota = { usedGB: used, limitGB: limit };
         showUserQuota(used, limit);
       } catch (e) {
+        console.error('[Quota] Error fetching quota:', e);
         userQuota = { usedGB: 0, limitGB: 0 };
         showUserQuota(0, 0);
       }
     }
 
     function showUserQuota(usedGB, limitGB) {
+      // Log what is being displayed
+      console.log('[Quota] Displaying:', { usedGB, limitGB });
       // Always show at least a small bar if used > 0
       let used = Number(usedGB) || 0;
       let limit = Number(limitGB) || 0;

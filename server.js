@@ -369,22 +369,29 @@ app.get('/api/limit/:username', (req, res) => {
   let limitGB = user.limitGB !== undefined && user.limitGB !== null ? user.limitGB : (user.role === 'owner' ? null : 5);
   let userDir = path.resolve(STORAGE_DIR, userKey);
 
-  // Fix: Always count file sizes using statSync (no encoding)
+  // Debug: Log directory and files for quota calculation
+  console.log(`[QUOTA] Calculating for user: ${username}, dir: ${userDir}`);
+
   function getDirSize(dir) {
     let total = 0;
-    if (!fs.existsSync(dir)) return 0;
+    if (!fs.existsSync(dir)) {
+      console.log(`[QUOTA] Directory does not exist: ${dir}`);
+      return 0;
+    }
     const files = fs.readdirSync(dir, { withFileTypes: true });
     for (const file of files) {
       const filePath = path.join(dir, file.name);
       try {
-        const stat = fs.statSync(filePath); // follows symlinks
+        const stat = fs.statSync(filePath);
         if (stat.isDirectory()) {
           total += getDirSize(filePath);
         } else if (stat.isFile()) {
           total += stat.size;
+          // Debug: Log each file and its size
+          console.log(`[QUOTA] File: ${filePath}, Size: ${stat.size}`);
         }
       } catch (e) {
-        // skip unreadable files
+        console.log(`[QUOTA] Error reading: ${filePath}`, e.message);
       }
     }
     return total;
@@ -392,7 +399,7 @@ app.get('/api/limit/:username', (req, res) => {
 
   const usedBytes = getDirSize(userDir);
   const usedGB = +(usedBytes / (1024 * 1024 * 1024));
-  // Always return both fields, even if 0
+  console.log(`[QUOTA] User: ${username}, Used: ${usedBytes} bytes (${usedGB} GB), Limit: ${limitGB} GB`);
   res.json({ usedGB: usedGB, limitGB: limitGB || 0 });
 });
 
