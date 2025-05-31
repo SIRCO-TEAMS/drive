@@ -180,8 +180,10 @@
       <div id="toolbar">
         <button onclick="goUp()">⬆ Up</button>
         <button onclick="refreshFiles()">🔄 Refresh</button>
-        <button onclick="triggerUpload()">⬆ Upload</button>
-        <input type="file" id="upload-input" multiple webkitdirectory directory onchange="uploadFiles(event)">
+        <button onclick="triggerFileUpload()">⬆ Upload File(s)</button>
+        <input type="file" id="upload-file-input" multiple onchange="uploadFiles(event)">
+        <button onclick="triggerFolderUpload()">📁 Upload Folder</button>
+        <input type="file" id="upload-folder-input" multiple webkitdirectory directory onchange="uploadFiles(event)">
         <button onclick="createFolder()">📁 New Folder</button>
         <button onclick="createFile()">📄 New File</button>
         <div id="breadcrumbs"></div>
@@ -571,8 +573,11 @@
         })
       }).then(()=>{showLoading(false);listFiles();}).catch(()=>showLoading(false));
     }
-    function triggerUpload() {
-      document.getElementById('upload-input').click();
+    function triggerFileUpload() {
+      document.getElementById('upload-file-input').click();
+    }
+    function triggerFolderUpload() {
+      document.getElementById('upload-folder-input').click();
     }
     // Quota polling every 5 seconds
     let quotaInterval = null;
