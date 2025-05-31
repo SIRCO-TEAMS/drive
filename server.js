@@ -435,6 +435,8 @@ function startServer() {
 }
 
 // --- FTP SERVER INTEGRATION ---
+const FtpSrv = require('ftp-srv'); // <-- ADD THIS LINE
+
 // Read FTP port from settings.json, fallback to 2121
 function getFtpPort() {
   settings = loadSettings(); // reload in case changed
