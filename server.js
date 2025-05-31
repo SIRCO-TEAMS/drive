@@ -367,7 +367,14 @@ app.get('/api/limit/:username', (req, res) => {
   const user = userKey ? users[userKey] : null;
   if (!user) return res.status(404).json({ error: 'User not found' });
   let limitGB = user.limitGB !== undefined && user.limitGB !== null ? user.limitGB : (user.role === 'owner' ? null : 5);
-  let userDir = path.resolve(STORAGE_DIR, userKey);
+
+  // Fix: For owner, use STORAGE_DIR directly, not /storage/owner
+  let userDir;
+  if (user.role === 'owner') {
+    userDir = STORAGE_DIR;
+  } else {
+    userDir = path.resolve(STORAGE_DIR, userKey);
+  }
 
   // Debug: Log directory and files for quota calculation
   console.log(`[QUOTA] Calculating for user: ${username}, dir: ${userDir}`);
