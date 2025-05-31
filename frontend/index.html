@@ -299,20 +299,13 @@
           // Set cookies for username and token for fallback
           document.cookie = "username=" + encodeURIComponent(username) + "; path=/";
           document.cookie = "token=" + encodeURIComponent(token) + "; path=/";
-          showAuth(false);
-          document.getElementById('user-info').innerText = 'Logged in as ' + username + ' (' + role + ')';
-          refreshFiles();
-          // Show owner switches if owner
-          if (role === 'owner') {
-            document.getElementById('owner-switches').classList.remove('hidden');
-          } else {
-            document.getElementById('owner-switches').classList.add('hidden');
-          }
+          afterLogin();
         } else {
           alert(d.error || 'Login failed');
         }
       });
     }
+
     function register() {
       fetch(apiUrl('/api/register'), {
         method: 'POST',
@@ -933,7 +926,10 @@
 
     async function fetchUserQuota() {
       const user = getUsername();
-      if (!user) return;
+      if (!user) {
+        showUserQuota(0, 0);
+        return;
+      }
       try {
         const resp = await fetch(apiUrl('/api/limit/' + encodeURIComponent(user)));
         const data = await resp.json();
@@ -949,13 +945,13 @@
 
     function showUserQuota(usedGB, limitGB) {
       // Always show at least a small bar if used > 0
-      let used = usedGB;
-      let limit = limitGB;
+      let used = usedGB || 0;
+      let limit = limitGB || 0;
       let unit = "GB";
       // If both are < 1GB, show MB
-      if ((limitGB < 1 && limitGB > 0) || (usedGB < 1 && usedGB > 0)) {
-        used = usedGB * 1024;
-        limit = limitGB * 1024;
+      if ((limit < 1 && limit > 0) || (used < 1 && used > 0)) {
+        used = used * 1024;
+        limit = limit * 1024;
         unit = "MB";
       }
       // If both are < 0.01GB/MB, show KB
@@ -966,7 +962,7 @@
       }
       // Always show at least 0.01 for used if > 0
       if (used > 0 && used < 0.01) used = 0.01;
-      const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+      const percent = (limit > 0) ? Math.min(100, Math.round((used / limit) * 100)) : 0;
       let color = percent < 70 ? "#2d5be3" : percent < 90 ? "#e6a700" : "#d32f2f";
       document.getElementById('user-quota').innerHTML =
         `<b>Storage:</b> ${used.toFixed(2)} ${unit} / ${limit} ${unit}
@@ -982,46 +978,9 @@
       }, 0);
     }
 
-    function showQuotaDetails() {
-      // Calculate all units
-      const usedGB = userQuota.usedGB || 0;
-      const limitGB = userQuota.limitGB || 0;
-      const usedMB = usedGB * 1024;
-      const limitMB = limitGB * 1024;
-      const usedKB = usedMB * 1024;
-      const limitKB = limitMB * 1024;
-      const usedBytes = usedKB * 1024;
-      const limitBytes = limitKB * 1024;
-      alert(
-        `Storage Usage:\n` +
-        `GB: ${usedGB.toFixed(4)} / ${limitGB} GB\n` +
-        `MB: ${usedMB.toFixed(2)} / ${limitMB} MB\n` +
-        `KB: ${usedKB.toFixed(0)} / ${limitKB.toFixed(0)} KB\n` +
-        `Bytes: ${usedBytes.toFixed(0)} / ${limitBytes.toFixed(0)} bytes`
-      );
-    }
-
-    // Fetch and set upload limit from server settings on load (for owner)
-    async function setOwnerSettingsUI() {
-      if (role === 'owner') {
-        try {
-          const resp = await fetch(apiUrl('/api/admin/settings'), {
-            headers: { Authorization: 'Bearer ' + token }
-          });
-          const settings = await resp.json();
-          if (settings.uploadLimit) {
-            document.getElementById('upload-limit').value = settings.uploadLimit;
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-    }
-
-    // On load
-    if (token) {
+    // Always call fetchUserQuota after login and after file operations
+    function afterLogin() {
       showAuth(false);
-      // Always use getUsername for display
       document.getElementById('user-info').innerText = 'Logged in as ' + (getUsername() || role) + ' (' + role + ')';
       refreshFiles();
       fetchUserQuota();
@@ -1032,10 +991,16 @@
       } else {
         document.getElementById('owner-switches').classList.add('hidden');
       }
+    }
+
+    // On load
+    if (token) {
+      afterLogin();
     } else {
       showAuth(true);
       document.getElementById('owner-switches').classList.add('hidden');
       stopQuotaPolling();
+      showUserQuota(0, 0); // Show empty bar on logout
     }
 
     // Also refresh quota after file operations

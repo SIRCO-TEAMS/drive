@@ -359,17 +359,17 @@ app.get('/api/user/quota', auth(), (req, res) => {
 
 // Public endpoint: Get storage usage and limit for a user
 app.get('/api/limit/:username', (req, res) => {
-  const username = req.params.username;
+  let username = req.params.username;
   if (!username) return res.status(400).json({ error: 'Username required' });
   const users = loadUsers();
-  // Case-insensitive username lookup
+  // --- Fix: Case-insensitive username lookup ---
   const userKey = Object.keys(users).find(u => u.toLowerCase() === username.toLowerCase());
   const user = userKey ? users[userKey] : null;
   if (!user) return res.status(404).json({ error: 'User not found' });
   let limitGB = user.limitGB !== undefined ? user.limitGB : (user.role === 'owner' ? null : 5);
   let userDir = path.resolve(STORAGE_DIR, userKey);
 
-  // Fix: Only count files, not folders, and follow symlinks
+  // Only count files, not folders, and follow symlinks
   function getDirSize(dir) {
     let total = 0;
     if (!fs.existsSync(dir)) return 0;
@@ -469,8 +469,12 @@ function startFtpServer() {
   });
 
   ftpServer.on('login', async ({ username, password }, resolve, reject) => {
+    // --- Fix: Normalize username (case-insensitive, trim) ---
+    username = (username || '').trim();
     const users = loadUsers();
-    const user = users[username];
+    // Case-insensitive username lookup
+    const userKey = Object.keys(users).find(u => u.toLowerCase() === username.toLowerCase());
+    const user = userKey ? users[userKey] : null;
     if (!user || !bcrypt.compareSync(password, user.password)) {
       return reject(new Error('Invalid credentials'));
     }
@@ -482,7 +486,7 @@ function startFtpServer() {
     if (user.role === 'owner') {
       rootDir = STORAGE_DIR;
     } else {
-      rootDir = path.join(STORAGE_DIR, username);
+      rootDir = path.join(STORAGE_DIR, userKey);
       if (!fs.existsSync(rootDir)) fs.mkdirSync(rootDir, { recursive: true });
     }
     // Provide a custom fs with quota enforcement
@@ -490,8 +494,8 @@ function startFtpServer() {
     class QuotaFS extends FileSystem {
       async write(fileName, { append = false } = {}) {
         // Check quota before allowing write
-        const limit = getUserStorageLimit(username);
-        const used = getUserStorageUsage(username);
+        const limit = getUserStorageLimit(userKey);
+        const used = getUserStorageUsage(userKey);
         // Estimate new file size (not exact, but good enough)
         let incomingSize = 0;
         try {
