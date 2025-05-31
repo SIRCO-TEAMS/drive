@@ -16,9 +16,7 @@ const SETTINGS_FILE = path.join(__dirname, 'settings.json');
 const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '2048mb' }));
-
-// Serve frontend
-app.use(express.static(path.join(__dirname, 'frontend')));
+app.use(express.static('frontend')); // Serve frontend
 
 // Helper: Load users
 function loadUsers() {
