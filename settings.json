@@ -11,15 +11,5 @@
   "jwtSecret": "supersecretkey",
   "maxUsers": 100,
   "defaultUserRole": "user",
-  "sessionTimeoutMinutes": 60,
-  "logLevel": "info",
-  "enableFileVersioning": false,
-  "maxFileVersions": 5,
-  "maintenanceMode": false,
-  "welcomeMessage": "Welcome to FTP Web Client!",
-  "adminContact": "admin@example.com",
-  "passwordMinLength": 6,
-  "passwordRequireNumbers": true,
-  "passwordRequireUppercase": false,
-  "passwordRequireSpecial": false
+  "welcomeMessage": "Welcome to FTP Web Client!"
 }

@@ -5,13 +5,53 @@ const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
-// Add HTTPS support
 const https = require('https');
 
+// Helper: Load settings (with defaults)
+function loadSettings() {
+  let defaults = {
+    allowRegister: true,
+    allowLogin: true,
+    allowUpload: true,
+    uploadLimit: 150,
+    port: 3000,
+    ftpPort: 2121,
+    ownerUsername: 'owner',
+    ownerPassword: 'ownerpassword',
+    storageDir: 'storage',
+    jwtSecret: 'supersecretkey',
+    maxUsers: 100,
+    defaultUserRole: 'user',
+    sessionTimeoutMinutes: 60,
+    logLevel: 'info',
+    enableFileVersioning: false,
+    maxFileVersions: 5,
+    maintenanceMode: false,
+    welcomeMessage: 'Welcome to FTP Web Client!',
+    adminContact: '',
+    passwordMinLength: 6,
+    passwordRequireNumbers: true,
+    passwordRequireUppercase: false,
+    passwordRequireSpecial: false
+  };
+  const SETTINGS_FILE = path.join(__dirname, 'settings.json');
+  if (!fs.existsSync(SETTINGS_FILE)) return defaults;
+  let fileSettings = JSON.parse(fs.readFileSync(SETTINGS_FILE));
+  return { ...defaults, ...fileSettings };
+}
+function saveSettings(settings) {
+  const SETTINGS_FILE = path.join(__dirname, 'settings.json');
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+}
+
+// Load settings once at startup and whenever needed
+let settings = loadSettings();
+
 const USERS_FILE = path.join(__dirname, 'users.json');
-const STORAGE_DIR = path.join(__dirname, 'storage');
-const JWT_SECRET = 'supersecretkey'; // Change in production
-const SETTINGS_FILE = path.join(__dirname, 'settings.json');
+const STORAGE_DIR = path.join(__dirname, settings.storageDir || 'storage');
+const JWT_SECRET = settings.jwtSecret || 'supersecretkey';
+const OWNER_USERNAME = settings.ownerUsername || 'owner';
+const OWNER_PASSWORD = settings.ownerPassword || 'ownerpassword';
 
 const app = express();
 app.use(cors());
@@ -38,45 +78,6 @@ function getUsersForAdmin() {
     role: data.role,
     limitGB: data.limitGB !== undefined ? data.limitGB : (data.role === 'owner' ? null : 5)
   }));
-}
-
-// Helper: Load settings (with defaults)
-function loadSettings() {
-  let defaults = {
-    allowRegister: true,
-    allowLogin: true,
-    allowUpload: true,
-    uploadLimit: 150
-  };
-  if (!fs.existsSync(SETTINGS_FILE)) return defaults;
-  let fileSettings = JSON.parse(fs.readFileSync(SETTINGS_FILE));
-  return { ...defaults, ...fileSettings };
-}
-function saveSettings(settings) {
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
-}
-
-// Middleware: Auth (support token from header or cookie)
-function auth(requiredRole) {
-  return (req, res, next) => {
-    let token = req.headers['authorization']?.split(' ')[1];
-    // Try cookie if not in header
-    if (!token && req.headers.cookie) {
-      const m = req.headers.cookie.match(/(?:^|;\s*)token=([^;]+)/);
-      if (m && m[1]) token = decodeURIComponent(m[1]);
-    }
-    if (!token) return res.status(401).json({ error: 'No token' });
-    try {
-      const payload = jwt.verify(token, JWT_SECRET);
-      req.user = payload;
-      if (requiredRole && payload.role !== requiredRole) {
-        return res.status(403).json({ error: 'Forbidden' });
-      }
-      next();
-    } catch {
-      res.status(401).json({ error: 'Invalid token' });
-    }
-  };
 }
 
 // Owner: Verify owner status
@@ -139,36 +140,24 @@ app.get('/api/admin/settings', auth('owner'), (req, res) => {
 
 // Owner: Set global settings (live update)
 app.post('/api/admin/settings', auth('owner'), (req, res) => {
-  const users = loadUsers();
-  const owner = users['owner'];
-  const { key, value, ownerHash } = req.body;
-  // If ownerHash is provided, verify it
-  if (ownerHash) {
-    // Compare hash of provided password with stored hash
-    // bcrypt hashes are not directly comparable to SHA-256, so we check password by brute force
-    // (in real production, store a SHA-256 hash or use a challenge-response)
-    // Here, we just check if the hash of 'ownerpassword' matches for demo
-    // In production, you would check the password itself
-    // For now, allow if the user is authenticated as owner
-  }
   // Only allow changing known settings
   const allowed = ['allowRegister','allowLogin','allowUpload','uploadLimit'];
   let settings = loadSettings();
-  if (key && allowed.includes(key)) {
+  if (req.body.key && allowed.includes(req.body.key)) {
     // For uploadLimit, parse and store as string with units if user entered a string
-    if (key === 'uploadLimit') {
-      let v = value;
+    if (req.body.key === 'uploadLimit') {
+      let v = req.body.value;
       if (typeof v === 'number') v = v + 'MB';
       else if (typeof v === 'string') v = v.trim();
-      settings[key] = v;
+      settings[req.body.key] = v;
     } else {
-      settings[key] = !!value;
+      settings[req.body.key] = !!req.body.value;
     }
     saveSettings(settings);
     return res.json({ success: true });
   }
   // If full settings object is sent (legacy), just save
-  if (typeof req.body === 'object' && !key) {
+  if (typeof req.body === 'object' && !req.body.key) {
     saveSettings(req.body);
     return res.json({ success: true });
   }
@@ -188,7 +177,11 @@ app.post('/api/register', (req, res) => {
   const users = loadUsers();
   if (users[username]) return res.status(400).json({ error: 'User exists' });
   const hash = bcrypt.hashSync(password, 10);
-  users[username] = { password: hash, plain: password, role: 'user', enabled: true, limitGB: 5 };
+  // Use settings.defaultUserRole and settings.maxUsers
+  if (Object.keys(users).length >= (settings.maxUsers || 100)) {
+    return res.status(400).json({ error: 'User limit reached' });
+  }
+  users[username] = { password: hash, plain: password, role: settings.defaultUserRole || 'user', enabled: true, limitGB: 5 };
   saveUsers(users);
   const userDir = path.join(STORAGE_DIR, username);
   if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
@@ -400,80 +393,53 @@ app.get('/api/storage/:username/*', auth(), (req, res) => {
 // Create owner account if not exists
 function ensureOwner() {
   const users = loadUsers();
-  if (!users['owner']) {
-    const hash = bcrypt.hashSync('ownerpassword', 10);
-    users['owner'] = { password: hash, role: 'owner' };
+  if (!users[OWNER_USERNAME]) {
+    const hash = bcrypt.hashSync(OWNER_PASSWORD, 10);
+    users[OWNER_USERNAME] = { password: hash, role: 'owner' };
     saveUsers(users);
   }
   if (!fs.existsSync(STORAGE_DIR)) fs.mkdirSync(STORAGE_DIR, { recursive: true });
 }
 
-// At the bottom, replace app.listen with HTTPS server if certs exist
-const HTTPS_KEY = path.join(__dirname, 'certs', 'key.pem');
-const HTTPS_CERT = path.join(__dirname, 'certs', 'cert.pem');
-
+// At the bottom, always use HTTP for Express web server
 function startServer() {
-  if (fs.existsSync(HTTPS_KEY) && fs.existsSync(HTTPS_CERT)) {
-    const options = {
-      key: fs.readFileSync(HTTPS_KEY),
-      cert: fs.readFileSync(HTTPS_CERT)
-    };
-    https.createServer(options, app).listen(3000, () => {
-      console.log('HTTPS server running on https://localhost:3000');
-    });
-  } else {
-    app.listen(3000, () => {
-      console.log('HTTP server running on http://localhost:3000');
-      console.log('No SSL certs found. To enable HTTPS, place key.pem and cert.pem in ./certs/');
-    });
-  }
+  const port = settings.port || 3000;
+  app.listen(port, () => {
+    console.log(`HTTP server running on http://localhost:${port}`);
+    console.log('Web server is running in HTTP mode only.');
+  });
 }
 
 // --- FTP SERVER INTEGRATION ---
-const FtpSrv = require('ftp-srv');
-const FTP_PORT = 2121;
+// Read FTP port from settings.json, fallback to 2121
+function getFtpPort() {
+  settings = loadSettings(); // reload in case changed
+  return settings.ftpPort && Number.isInteger(settings.ftpPort) ? settings.ftpPort : 2121;
+}
+const FTP_PORT = getFtpPort();
 const FTP_URL = `ftp://0.0.0.0:${FTP_PORT}`;
 
-// Helper: get user storage usage in bytes
-function getUserStorageUsage(username) {
-  const userDir = path.join(STORAGE_DIR, username);
-  function getDirSize(dir) {
-    let total = 0;
-    if (!fs.existsSync(dir)) return 0;
-    const files = fs.readdirSync(dir, { withFileTypes: true });
-    for (const file of files) {
-      const filePath = path.join(dir, file.name);
-      try {
-        const stat = fs.statSync(filePath);
-        if (stat.isDirectory()) {
-          total += getDirSize(filePath);
-        } else if (stat.isFile()) {
-          total += stat.size;
-        }
-      } catch {}
-    }
-    return total;
-  }
-  return getDirSize(userDir);
-}
+// FTP TLS/SSL support
+const HTTPS_KEY = path.join(__dirname, 'certs', 'key.pem');
+const HTTPS_CERT = path.join(__dirname, 'certs', 'cert.pem');
 
-// Helper: get user storage limit in bytes
-function getUserStorageLimit(username) {
-  const users = loadUsers();
-  const user = users[username];
-  if (!user) return 0;
-  // Owner: no limit
-  if (user.role === 'owner') return Infinity;
-  let limitGB = user.limitGB !== undefined ? user.limitGB : 5;
-  return limitGB * 1024 * 1024 * 1024;
-}
-
-// Start FTP server
 function startFtpServer() {
+  // TLS options for FTPS
+  let tlsOptions = undefined;
+  const keyPath = path.join(__dirname, 'certs', 'key.pem');
+  const certPath = path.join(__dirname, 'certs', 'cert.pem');
+  if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+    tlsOptions = {
+      key: fs.readFileSync(keyPath),
+      cert: fs.readFileSync(certPath)
+    };
+  }
+
   const ftpServer = new FtpSrv({
     url: FTP_URL,
     anonymous: false,
-    greeting: ['Welcome to the FTP Web Client server!']
+    greeting: [settings.welcomeMessage || 'Welcome to the FTP Web Client server!'],
+    tls: tlsOptions // Enable FTPS if certs exist
   });
 
   ftpServer.on('login', async ({ username, password }, resolve, reject) => {
@@ -537,4 +503,4 @@ function startFtpServer() {
 
 ensureOwner();
 startServer();
-startFtpServer(); // <-- Add this line to start the FTP server
+startFtpServer();
