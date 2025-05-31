@@ -237,11 +237,13 @@
   <div id="custom-context-menu" class="context-menu-custom"></div>
 
   <script>
-    // Set staticMode to true for static hosting, false for node mode
-    const staticMode = false; // Change to true for static mode
+    // Fix typo: 'ture' -> 'true'
+    const staticMode = true; // Change to true for static mode
+
+    // Move staticMode declaration to the very top, before any function uses it
     let backendUrl = '';
     if (staticMode) {
-      backendUrl = 'http://localhost:3000'; // Change this to your backend URL for static mode
+      backendUrl = 'https://syn-072-129-179-229.res.spectrum.com:3000'; // Change this to your backend URL for static mode
     }
     let token = localStorage.getItem('token');
     let role = localStorage.getItem('role');

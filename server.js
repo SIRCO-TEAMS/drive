@@ -5,6 +5,8 @@ const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+// Add HTTPS support
+const https = require('https');
 
 const USERS_FILE = path.join(__dirname, 'users.json');
 const STORAGE_DIR = path.join(__dirname, 'storage');
@@ -408,8 +410,26 @@ function ensureOwner() {
   if (!fs.existsSync(STORAGE_DIR)) fs.mkdirSync(STORAGE_DIR, { recursive: true });
 }
 
-ensureOwner();
+// At the bottom, replace app.listen with HTTPS server if certs exist
+const HTTPS_KEY = path.join(__dirname, 'certs', 'key.pem');
+const HTTPS_CERT = path.join(__dirname, 'certs', 'cert.pem');
 
-app.listen(3000, () => {
-  console.log('FTP-like server running on http://localhost:3000');
-});
+function startServer() {
+  if (fs.existsSync(HTTPS_KEY) && fs.existsSync(HTTPS_CERT)) {
+    const options = {
+      key: fs.readFileSync(HTTPS_KEY),
+      cert: fs.readFileSync(HTTPS_CERT)
+    };
+    https.createServer(options, app).listen(3000, () => {
+      console.log('HTTPS server running on https://localhost:3000');
+    });
+  } else {
+    app.listen(3000, () => {
+      console.log('HTTP server running on http://localhost:3000');
+      console.log('No SSL certs found. To enable HTTPS, place key.pem and cert.pem in ./certs/');
+    });
+  }
+}
+
+ensureOwner();
+startServer();
