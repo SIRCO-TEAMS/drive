@@ -431,5 +431,112 @@ function startServer() {
   }
 }
 
+// --- FTP SERVER INTEGRATION ---
+const FtpSrv = require('ftp-srv');
+const FTP_PORT = 2121;
+const FTP_URL = `ftp://0.0.0.0:${FTP_PORT}`;
+
+// Helper: get user storage usage in bytes
+function getUserStorageUsage(username) {
+  const userDir = path.join(STORAGE_DIR, username);
+  function getDirSize(dir) {
+    let total = 0;
+    if (!fs.existsSync(dir)) return 0;
+    const files = fs.readdirSync(dir, { withFileTypes: true });
+    for (const file of files) {
+      const filePath = path.join(dir, file.name);
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.isDirectory()) {
+          total += getDirSize(filePath);
+        } else if (stat.isFile()) {
+          total += stat.size;
+        }
+      } catch {}
+    }
+    return total;
+  }
+  return getDirSize(userDir);
+}
+
+// Helper: get user storage limit in bytes
+function getUserStorageLimit(username) {
+  const users = loadUsers();
+  const user = users[username];
+  if (!user) return 0;
+  // Owner: no limit
+  if (user.role === 'owner') return Infinity;
+  let limitGB = user.limitGB !== undefined ? user.limitGB : 5;
+  return limitGB * 1024 * 1024 * 1024;
+}
+
+// Start FTP server
+function startFtpServer() {
+  const ftpServer = new FtpSrv({
+    url: FTP_URL,
+    anonymous: false,
+    greeting: ['Welcome to the FTP Web Client server!']
+  });
+
+  ftpServer.on('login', async ({ username, password }, resolve, reject) => {
+    const users = loadUsers();
+    const user = users[username];
+    if (!user || !bcrypt.compareSync(password, user.password)) {
+      return reject(new Error('Invalid credentials'));
+    }
+    if (user.enabled === false && user.role !== 'owner') {
+      return reject(new Error('User disabled'));
+    }
+    // Owner: root access, others: only their folder
+    let rootDir;
+    if (user.role === 'owner') {
+      rootDir = STORAGE_DIR;
+    } else {
+      rootDir = path.join(STORAGE_DIR, username);
+      if (!fs.existsSync(rootDir)) fs.mkdirSync(rootDir, { recursive: true });
+    }
+    // Provide a custom fs with quota enforcement
+    const { FileSystem } = require('ftp-srv');
+    class QuotaFS extends FileSystem {
+      async write(fileName, { append = false } = {}) {
+        // Check quota before allowing write
+        const limit = getUserStorageLimit(username);
+        const used = getUserStorageUsage(username);
+        // Estimate new file size (not exact, but good enough)
+        let incomingSize = 0;
+        try {
+          // If file exists, get its size
+          const stat = fs.existsSync(fileName) ? fs.statSync(fileName) : null;
+          incomingSize = stat ? stat.size : 0;
+        } catch {}
+        // If over quota, reject
+        if (used >= limit) {
+          throw new Error('Storage quota exceeded');
+        }
+        // Wrap the stream to check size as data comes in
+        const stream = await super.write(fileName, { append });
+        let written = 0;
+        stream.on('data', chunk => {
+          written += chunk.length;
+          if (used + written > limit) {
+            stream.destroy(new Error('Storage quota exceeded'));
+          }
+        });
+        return stream;
+      }
+    }
+    resolve({ root: rootDir, fs: QuotaFS });
+  });
+
+  ftpServer.listen()
+    .then(() => {
+      console.log(`FTP server running at ${FTP_URL}`);
+    })
+    .catch(err => {
+      console.error('FTP server failed to start:', err);
+    });
+}
+
 ensureOwner();
 startServer();
+startFtpServer(); // <-- Add this line to start the FTP server

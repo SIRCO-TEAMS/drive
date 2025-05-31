@@ -4,6 +4,7 @@
   "allowUpload": true,
   "uploadLimit": "650GB",
   "port": 3000,
+  "ftpPort": 2121,
   "ownerUsername": "owner",
   "ownerPassword": "ownerpassword",
   "storageDir": "storage",
