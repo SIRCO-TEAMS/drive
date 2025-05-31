@@ -931,11 +931,11 @@
         return;
       }
       try {
-        const resp = await fetch(apiUrl('/api/limit/' + encodeURIComponent(user)));
+        const resp = await fetch(apiUrl('/api/limit/' + encodeURIComponent(user)) + '?_=' + Date.now());
         const data = await resp.json();
         // Always use the returned values, fallback to 0 if missing
-        let used = (typeof data.usedGB === 'number') ? data.usedGB : 0;
-        let limit = (typeof data.limitGB === 'number') ? data.limitGB : 0;
+        let used = Number(data.usedGB) || 0;
+        let limit = Number(data.limitGB) || 0;
         userQuota = { usedGB: used, limitGB: limit };
         showUserQuota(used, limit);
       } catch (e) {
@@ -946,8 +946,8 @@
 
     function showUserQuota(usedGB, limitGB) {
       // Always show at least a small bar if used > 0
-      let used = usedGB || 0;
-      let limit = limitGB || 0;
+      let used = Number(usedGB) || 0;
+      let limit = Number(limitGB) || 0;
       let unit = "GB";
       // If both are < 1GB, show MB
       if ((limit < 1 && limit > 0) || (used < 1 && used > 0)) {
@@ -979,10 +979,9 @@
       }, 0);
     }
 
-    // Add this function to show quota details (if not already present)
     function showQuotaDetails() {
-      const usedGB = userQuota.usedGB || 0;
-      const limitGB = userQuota.limitGB || 0;
+      const usedGB = Number(userQuota.usedGB) || 0;
+      const limitGB = Number(userQuota.limitGB) || 0;
       const usedMB = usedGB * 1024;
       const limitMB = limitGB * 1024;
       const usedKB = usedMB * 1024;
