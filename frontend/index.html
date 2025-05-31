@@ -582,6 +582,7 @@
     }
     function stopQuotaPolling() {
       if (quotaInterval) clearInterval(quotaInterval);
+      quotaInterval = null;
     }
     // Upload progress bar
     function showUploadProgress(percent) {
@@ -1008,7 +1009,7 @@
       document.getElementById('user-info').innerText = 'Logged in as ' + (getUsername() || role) + ' (' + role + ')';
       refreshFiles();
       fetchUserQuota();
-      startQuotaPolling();
+      startQuotaPolling(); // <-- ensures quota is checked every 5 seconds
       if (role === 'owner') {
         document.getElementById('owner-switches').classList.remove('hidden');
         setOwnerSettingsUI();

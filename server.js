@@ -369,7 +369,7 @@ app.get('/api/limit/:username', (req, res) => {
   let limitGB = user.limitGB !== undefined && user.limitGB !== null ? user.limitGB : (user.role === 'owner' ? null : 5);
   let userDir = path.resolve(STORAGE_DIR, userKey);
 
-  // Only count files, not folders, and follow symlinks
+  // Fix: Always count file sizes using statSync (no encoding)
   function getDirSize(dir) {
     let total = 0;
     if (!fs.existsSync(dir)) return 0;
@@ -391,9 +391,9 @@ app.get('/api/limit/:username', (req, res) => {
   }
 
   const usedBytes = getDirSize(userDir);
-  const usedGB = +(usedBytes / (1024 * 1024 * 1024)).toFixed(4);
+  const usedGB = +(usedBytes / (1024 * 1024 * 1024));
   // Always return both fields, even if 0
-  res.json({ usedGB: usedGB || 0, limitGB: limitGB || 0 });
+  res.json({ usedGB: usedGB, limitGB: limitGB || 0 });
 });
 
 // Serve user files for preview/download: /api/storage/:username/*
