@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FTP Web Client</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #f3f3f3; }
+    #container { display: flex; height: 100vh; }
+    #sidebar { width: 220px; background: #23232b; color: #fff; padding: 1.5em 0.5em; box-shadow: 2px 0 8px #0002; }
+    #sidebar h2 { font-size: 1.3em; margin: 0 0 1.5em 0; letter-spacing: 1px; }
+    #sidebar .user { margin-bottom: 2em; font-size: 1.1em; }
+    #sidebar button { background: #3a3a40; color: #fff; border: none; padding: 0.5em 1.2em; border-radius: 4px; cursor: pointer; margin-top: 1em; }
+    #sidebar button:hover { background: #50505a; }
+    #main { flex: 1; display: flex; flex-direction: column; }
+    #toolbar { background: #f8f8fa; padding: 0.7em 1.2em; border-bottom: 1px solid #e0e0e0; display: flex; align-items: center; gap: 0.7em; }
+    #toolbar button { background: #e7e7ef; border: 1px solid #d0d0d7; border-radius: 4px; padding: 0.4em 1em; cursor: pointer; transition: background 0.2s; }
+    #toolbar button:hover, #toolbar button:focus { background: #d0e3ff; outline: none; }
+    #breadcrumbs { margin-left: 1em; flex: 1; font-size: 1.05em; }
+    #breadcrumbs a { color: #2d5be3; text-decoration: none; }
+    #breadcrumbs a:hover { text-decoration: underline; }
+    #file-list { flex: 1; overflow: auto; background: #fff; padding: 1em; border-radius: 0 0 8px 8px; box-shadow: 0 2px 8px #0001; }
+    .file-row { display: flex; align-items: center; padding: 6px 10px; border-radius: 4px; cursor: pointer; user-select: none; transition: background 0.15s; }
+    .file-row.selected { background: #d0e3ff; }
+    .file-row:hover { background: #f0f6ff; }
+    .file-icon { width: 26px; margin-right: 10px; text-align: center; font-size: 1.2em; }
+    .file-name { flex: 1; font-size: 1.05em; }
+    .file-actions { display: flex; gap: 0.3em; }
+    .file-actions button { background: #f3f3f3; border: 1px solid #d0d0d7; border-radius: 3px; padding: 0.2em 0.7em; font-size: 0.95em; }
+    .file-actions button:hover { background: #e0eaff; }
+    #editor, #raw-view { width: 100%; height: 220px; margin-top: 1em; font-family: 'Fira Mono', monospace; font-size: 1em; border-radius: 6px; border: 1px solid #d0d0d7; padding: 0.7em; background: #f8f8fa; }
+    #preview-tabs { margin-top: 1em; }
+    #preview-tabs button { margin-right: 0.5em; background: #e7e7ef; border: 1px solid #d0d0d7; border-radius: 4px; padding: 0.3em 1em; }
+    #preview-tabs button.active { background: #d0e3ff; }
+    #context-menu { position: absolute; display: none; background: #fff; border: 1px solid #ccc; z-index: 1000; box-shadow: 2px 2px 8px #0002; min-width: 140px; border-radius: 6px; }
+    #context-menu div { padding: 8px 18px; cursor: pointer; font-size: 1em; }
+    #context-menu div:hover { background: #e0eaff; }
+    .hidden { display: none; }
+    input[type="file"] { display: none; }
+    .rename-input { width: 80%; font-size: 1em; border: 1px solid #d0d0d7; border-radius: 3px; padding: 2px 6px; }
+    .properties-dialog { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); background: #fff; border-radius: 8px; box-shadow: 0 2px 16px #0003; padding: 2em 2.5em; z-index: 3000; min-width: 320px; }
+    .properties-dialog h4 { margin-top: 0; }
+    .properties-dialog button { margin-top: 1em; }
+    #loading-bar {
+      display: none;
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 100vw;
+      height: 4px;
+      z-index: 3000;
+      background: linear-gradient(90deg,#2d5be3 40%,#6ec6ff 100%);
+      animation: loadingbar 1s linear infinite;
+    }
+    @keyframes loadingbar {
+      0% { background-position: 0 0; }
+      100% { background-position: 100vw 0; }
+    }
+    #img-preview { max-width: 100%; max-height: 300px; display: block; margin: 1em auto; border-radius: 8px; box-shadow: 0 2px 8px #0002; }
+
+    /* Switch style for owner controls */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+      vertical-align: middle;
+      margin-right: 10px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #ccc;
+      transition: .2s;
+      border-radius: 24px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .2s;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px #0002;
+    }
+    input:checked + .slider {
+      background-color: #2d5be3;
+    }
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+
+    /* Add drag-and-drop overlay */
+    #drop-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(45,91,227,0.12);
+      z-index: 5000;
+      align-items: center;
+      justify-content: center;
+      font-size: 2em;
+      color: #2d5be3;
+      pointer-events: none;
+      user-select: none;
+    }
+    #drop-overlay.active {
+      display: flex;
+      pointer-events: all;
+    }
+    .context-menu-custom {
+      position: absolute;
+      z-index: 9999;
+      background: #fff;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      box-shadow: 2px 2px 8px #0002;
+      min-width: 160px;
+      padding: 0;
+      font-size: 1em;
+      display: none;
+    }
+    .context-menu-custom .item {
+      padding: 10px 18px;
+      cursor: pointer;
+      border-bottom: 1px solid #eee;
+      background: #fff;
+      transition: background 0.15s;
+    }
+    .context-menu-custom .item:last-child { border-bottom: none; }
+    .context-menu-custom .item:hover { background: #e0eaff; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="sidebar">
+      <h2>FTP Web Client</h2>
+      <div class="user" id="user-info"></div>
+      <button id="logout" onclick="logout()">Logout</button>
+      <div id="owner-switches" class="hidden" style="margin-top:2em;">
+        <h3 style="font-size:1.1em;">Owner Controls</h3>
+        <label>
+          <span class="switch">
+            <input type="checkbox" id="switch-allowRegister" onchange="toggleSetting('allowRegister')" checked>
+            <span class="slider"></span>
+          </span>
+          Allow Registration
+        </label><br>
+        <label>
+          <span class="switch">
+            <input type="checkbox" id="switch-allowLogin" onchange="toggleSetting('allowLogin')" checked>
+            <span class="slider"></span>
+          </span>
+          Allow Login
+        </label><br>
+        <label>
+          <span class="switch">
+            <input type="checkbox" id="switch-allowUpload" onchange="toggleSetting('allowUpload')" checked>
+            <span class="slider"></span>
+          </span>
+          Allow Upload
+        </label><br>
+        <label style="margin-top:1em;display:block;">
+          Upload Limit (GB, MB, KB, bytes):
+          <input type="text" id="upload-limit" style="width:110px;margin-left:8px;" onchange="setUploadLimit()" placeholder="e.g. 100MB" />
+        </label>
+        <button id="manage-users-btn" style="margin-top:1em;width:100%;" onclick="showUsersModal()">Manage Users</button>
+      </div>
+    </div>
+    <div id="main">
+      <div id="toolbar">
+        <button onclick="goUp()">⬆ Up</button>
+        <button onclick="refreshFiles()">🔄 Refresh</button>
+        <button onclick="triggerUpload()">⬆ Upload</button>
+        <input type="file" id="upload-input" multiple onchange="uploadFiles(event)">
+        <button onclick="createFolder()">📁 New Folder</button>
+        <button onclick="createFile()">📄 New File</button>
+        <div id="breadcrumbs"></div>
+      </div>
+      <div id="user-quota" style="margin:0.5em 1em 0.5em 1em;font-size:0.98em;color:#444;">
+        <!-- Storage bar will be rendered here -->
+        <button id="quota-details-btn" style="margin-left:10px;font-size:0.95em;vertical-align:middle;">Details</button>
+      </div>
+      <div id="file-list"></div>
+      <div id="preview-tabs" class="hidden">
+        <button onclick="showTab('normal')" id="tab-normal">Normal View</button>
+        <button onclick="showTab('raw')" id="tab-raw">Raw Data</button>
+        <button onclick="showTab('image')" id="tab-image">Image</button>
+        <button onclick="showTab('pdf')" id="tab-pdf">PDF</button>
+        <button onclick="downloadSelected()">⬇ Download</button>
+        <button onclick="deleteFile()">🗑 Delete</button>
+        <button onclick="saveFile()">💾 Save</button>
+      </div>
+      <textarea id="editor" class="hidden"></textarea>
+      <textarea id="raw-view" class="hidden" readonly></textarea>
+      <img id="img-preview" class="hidden" />
+      <iframe id="pdf-preview" class="hidden" style="width:100%;height:400px;border-radius:8px;border:1px solid #d0d0d7;margin-top:1em;"></iframe>
+    </div>
+  </div>
+  <div id="context-menu"></div>
+  <div id="properties-dialog" class="hidden properties-dialog"></div>
+  <div id="auth" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0008;display:flex;align-items:center;justify-content:center;z-index:2000;">
+    <div style="background:#fff;padding:2em 3em;border-radius:8px;box-shadow:0 2px 16px #0003;min-width:300px;">
+      <h3>Login</h3>
+      <input id="login-username" placeholder="Username"><br><br>
+      <input id="login-password" type="password" placeholder="Password"><br><br>
+      <button onclick="login()">Login</button>
+      <hr>
+      <h4>Register</h4>
+      <input id="register-username" placeholder="New Username"><br><br>
+      <input id="register-password" type="password" placeholder="New Password"><br><br>
+      <button onclick="register()">Register</button>
+    </div>
+  </div>
+  <div id="loading-bar" style="display:none;position:fixed;top:0;left:0;width:100vw;height:4px;z-index:3000;background:linear-gradient(90deg,#2d5be3 40%,#6ec6ff 100%);animation:loadingbar 1s linear infinite;"></div>
+  <div id="upload-progress-bar" class="hidden" style="position:fixed;bottom:0;left:0;width:100vw;height:6px;z-index:4000;background:#e0eaff;">
+    <div id="upload-progress-inner" style="height:100%;width:0%;background:#2d5be3;transition:width 0.2s;"></div>
+  </div>
+  <div id="users-modal" class="hidden" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0008;z-index:4000;display:none;align-items:center;justify-content:center;">
+    <div style="background:#fff;padding:2em 2em;min-width:400px;border-radius:8px;max-height:80vh;overflow:auto;">
+      <h3>All Users</h3>
+      <div id="users-list"></div>
+      <button onclick="closeUsersModal()" style="margin-top:1em;">Close</button>
+    </div>
+  </div>
+
+  <!-- Add drag-and-drop overlay -->
+  <div id="drop-overlay">Drop files to upload</div>
+  <div id="custom-context-menu" class="context-menu-custom"></div>
+
+  <script>
+    // Set staticMode to true for static hosting, false for node mode
+    const staticMode = false; // Change to true for static mode
+    let backendUrl = '';
+    if (staticMode) {
+      backendUrl = 'http://localhost:3000'; // Change this to your backend URL for static mode
+    }
+    let token = localStorage.getItem('token');
+    let role = localStorage.getItem('role');
+    let username = localStorage.getItem('username'); // Add username variable
+    let cwd = '';
+    let selectedFile = '';
+    let selectedIsDir = false;
+    let filesCache = [];
+    let contextMenuFile = null;
+    let renameMode = null;
+    // Multi-select state
+    let selectedFiles = new Set();
+
+    function showAuth(show) {
+      document.getElementById('auth').style.display = show ? '' : 'none';
+      if (show) hideAllAdminModals();
+    }
+    function apiUrl(path) {
+      if (staticMode) return backendUrl + path;
+      return path;
+    }
+    // Utility to get username from localStorage or cookies
+    function getUsername() {
+      let u = localStorage.getItem('username');
+      if (u && u !== 'null' && u !== 'undefined') return u;
+      // Try cookies
+      let m = document.cookie.match(/(?:^|;\s*)username=([^;]+)/);
+      if (m && m[1]) return decodeURIComponent(m[1]);
+      // Try to get from login input as last resort
+      let input = document.getElementById('login-username');
+      if (input && input.value) return input.value;
+      return '';
+    }
+
+    function login() {
+      fetch(apiUrl('/api/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: document.getElementById('login-username').value,
+          password: document.getElementById('login-password').value
+        })
+      }).then(r => r.json()).then(d => {
+        if (d.token) {
+          token = d.token;
+          role = d.role;
+          username = d.username || document.getElementById('login-username').value;
+          localStorage.setItem('token', token);
+          localStorage.setItem('role', role);
+          localStorage.setItem('username', username);
+          // Set cookies for username and token for fallback
+          document.cookie = "username=" + encodeURIComponent(username) + "; path=/";
+          document.cookie = "token=" + encodeURIComponent(token) + "; path=/";
+          showAuth(false);
+          document.getElementById('user-info').innerText = 'Logged in as ' + username + ' (' + role + ')';
+          refreshFiles();
+          // Show owner switches if owner
+          if (role === 'owner') {
+            document.getElementById('owner-switches').classList.remove('hidden');
+          } else {
+            document.getElementById('owner-switches').classList.add('hidden');
+          }
+        } else {
+          alert(d.error || 'Login failed');
+        }
+      });
+    }
+    function register() {
+      fetch(apiUrl('/api/register'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: document.getElementById('register-username').value,
+          password: document.getElementById('register-password').value
+        })
+      }).then(r => r.json()).then(d => {
+        if (d.success) {
+          alert('Registered! Now login.');
+        } else {
+          alert(d.error || 'Register failed');
+        }
+      });
+    }
+    function logout() {
+      localStorage.removeItem('token');
+      localStorage.removeItem('role');
+      localStorage.removeItem('username');
+      // Remove username cookie
+      document.cookie = "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+      token = null;
+      role = null;
+      username = null;
+      showAuth(true);
+      document.getElementById('owner-switches').classList.add('hidden');
+    }
+    function refreshFiles() { listFiles(); }
+    function listFiles() {
+      fetch(apiUrl('/api/files?path=' + encodeURIComponent(cwd)), {
+        headers: { Authorization: 'Bearer ' + token }
+      }).then(r => r.json()).then(files => {
+        filesCache = files;
+        renderFileList(files);
+        renderBreadcrumbs();
+        hidePreview();
+      });
+    }
+    // Update renderFileList to support multi-select
+    function renderFileList(files) {
+      const list = files.map(f =>
+        `<div class="file-row${selectedFiles.has(f.name)?' selected':''}" 
+          oncontextmenu="showContextMenu(event, '${f.name}', ${f.isDir})" 
+          ondblclick="${f.isDir?`enterDir('${f.name}')`:`openFile('${f.name}')`}" 
+          onclick="selectFile('${f.name}',${f.isDir},event)">
+          <span class="file-icon">${f.isDir?'📁':'📄'}</span>
+          <span class="file-name">${renameMode===f.name?`<input class='rename-input' id='rename-input' value='${f.name}' onkeydown='renameKey(event,"${f.name}",${f.isDir})'>`:`${f.name}`}</span>
+          <span class="file-actions">
+            <button onclick="event.stopPropagation();${f.isDir?`enterDir('${f.name}')`:`openFile('${f.name}')`}">${f.isDir?'Open':'View'}</button>
+            ${!f.isDir?`<button onclick="event.stopPropagation();downloadFile('${f.name}')">⬇</button>`:''}
+            <button onclick="event.stopPropagation();startRename('${f.name}')">✏️</button>
+            <button onclick="event.stopPropagation();showProperties('${f.name}',${f.isDir})">ℹ️</button>
+          </span>
+        </div>`
+      ).join('');
+      document.getElementById('file-list').innerHTML = list;
+      if(renameMode) setTimeout(()=>{document.getElementById('rename-input').focus();},0);
+    }
+
+    // Multi-select logic
+    function selectFile(name, isDir, event) {
+      if (event && event.ctrlKey) {
+        // Toggle selection
+        if (selectedFiles.has(name)) selectedFiles.delete(name);
+        else selectedFiles.add(name);
+      } else if (event && event.shiftKey && filesCache.length > 0) {
+        // Range select
+        const names = filesCache.map(f => f.name);
+        const last = [...selectedFiles].pop();
+        const idx1 = names.indexOf(last || name);
+        const idx2 = names.indexOf(name);
+        if (idx1 !== -1 && idx2 !== -1) {
+          const [start, end] = [Math.min(idx1, idx2), Math.max(idx1, idx2)];
+          for (let i = start; i <= end; ++i) selectedFiles.add(names[i]);
+        } else {
+          selectedFiles.add(name);
+        }
+      } else {
+        // Single select
+        selectedFiles = new Set([name]);
+      }
+      selectedFile = name;
+      selectedIsDir = isDir;
+      renderFileList(filesCache);
+      if (!isDir && selectedFiles.size === 1) openFile(name);
+      else if (isDir && selectedFiles.size === 1) hidePreview();
+    }
+
+    function renderBreadcrumbs() {
+      const parts = cwd.split('/').filter(Boolean);
+      let html = '<b>Root</b>';
+      let path = '';
+      for (let i=0; i<parts.length; ++i) {
+        path += (path?'/':'') + parts[i];
+        html += ` / <a href=\"#\" onclick=\"gotoPath('${path}')\">${parts[i]}</a>`;
+      }
+      document.getElementById('breadcrumbs').innerHTML = html;
+    }
+    function gotoPath(path) {
+      cwd = path;
+      listFiles();
+    }
+    function openFile(name) {
+      selectedFile = name;
+      showLoading(true);
+      fetch(apiUrl('/api/file?path=' + encodeURIComponent(cwd ? cwd + '/' + name : name)), {
+        headers: { Authorization: 'Bearer ' + token }
+      }).then(r => r.json()).then(d => {
+        showPreview(d.content, name);
+        showLoading(false);
+      }).catch(()=>showLoading(false));
+    }
+    function showPreview(content, name) {
+      document.getElementById('preview-tabs').classList.remove('hidden');
+      // File extension
+      const ext = name ? name.split('.').pop().toLowerCase() : '';
+      // Text file types
+      const textTypes = ["txt","json","js","md","css","html","csv","log","xml","yml","yaml","py","c","cpp","h","java","sh","ts","tsx","jsx","php","rb","go","rs","ini","conf"];
+      // Image file types
+      const imgTypes = [
+        "jpg","jpeg","png","gif","bmp","webp","svg","ico","tiff","tif","jfif","pjpeg","pjp","apng","avif","heic","heif"
+      ];
+      // PDF
+      if (ext === 'pdf') {
+        showTab('pdf');
+        let pdf = document.getElementById('pdf-preview');
+        // Convert base64 to blob URL
+        const byteArray = Uint8Array.from(atob(btoa(unescape(encodeURIComponent(content)))), c => c.charCodeAt(0));
+        const blob = new Blob([byteArray], {type: 'application/pdf'});
+        pdf.src = URL.createObjectURL(blob);
+        pdf.classList.remove('hidden');
+        document.getElementById('editor').classList.add('hidden');
+        document.getElementById('raw-view').classList.add('hidden');
+        document.getElementById('img-preview').classList.add('hidden');
+        return;
+      }
+      // Image
+      if (imgTypes.includes(ext)) {
+        showTab('image');
+        let img = document.getElementById('img-preview');
+        // Build the file path for /api/storage/<username>/<cwd>/<name>
+        let user = getUsername();
+        let filePath = '';
+        if (cwd) {
+          filePath = user + '/' + cwd + '/' + name;
+        } else {
+          filePath = user + '/' + name;
+        }
+        // Use /api/storage/ instead of /storage/
+        img.src = '/api/storage/' + filePath.split('/').map(encodeURIComponent).join('/');
+        img.classList.remove('hidden');
+        document.getElementById('editor').classList.add('hidden');
+        document.getElementById('raw-view').classList.add('hidden');
+        document.getElementById('pdf-preview').classList.add('hidden');
+        return;
+      }
+      // Text
+      if (textTypes.includes(ext)) {
+        showTab('normal');
+        document.getElementById('editor').value = content;
+        document.getElementById('raw-view').value = btoa(unescape(encodeURIComponent(content)));
+        document.getElementById('editor').classList.remove('hidden');
+        document.getElementById('raw-view').classList.add('hidden');
+        document.getElementById('img-preview').classList.add('hidden');
+        document.getElementById('pdf-preview').classList.add('hidden');
+        return;
+      }
+      // Default: show raw
+      showTab('raw');
+      // Show progress bar while loading raw data
+      showRawProgressBar();
+      // Try to show as base64
+      let raw;
+      setTimeout(() => {
+        try {
+          raw = btoa(unescape(encodeURIComponent(content)));
+        } catch {
+          raw = content;
+        }
+        document.getElementById('raw-view').value = raw;
+        hideRawProgressBar();
+      }, 300); // Simulate a short delay for UX
+      document.getElementById('editor').classList.add('hidden');
+      document.getElementById('img-preview').classList.add('hidden');
+      document.getElementById('pdf-preview').classList.add('hidden');
+    }
+    function showTab(tab) {
+      document.getElementById('tab-normal').classList.toggle('active', tab==='normal');
+      document.getElementById('tab-raw').classList.toggle('active', tab==='raw');
+      document.getElementById('tab-image').classList.toggle('active', tab==='image');
+      document.getElementById('tab-pdf').classList.toggle('active', tab==='pdf');
+      document.getElementById('editor').classList.toggle('hidden', tab!=='normal');
+      document.getElementById('raw-view').classList.toggle('hidden', tab!=='raw');
+      document.getElementById('img-preview').classList.toggle('hidden', tab!=='image');
+      document.getElementById('pdf-preview').classList.toggle('hidden', tab!=='pdf');
+    }
+    function hidePreview() {
+      document.getElementById('preview-tabs').classList.add('hidden');
+      document.getElementById('editor').classList.add('hidden');
+      document.getElementById('raw-view').classList.add('hidden');
+      document.getElementById('img-preview').classList.add('hidden');
+      document.getElementById('pdf-preview').classList.add('hidden');
+    }
+    function saveFile() {
+      if (!selectedFile) return alert('No file selected');
+      showLoading(true);
+      fetch(apiUrl('/api/file'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          path: cwd ? cwd + '/' + selectedFile : selectedFile,
+          content: document.getElementById('editor').value
+        })
+      }).then(r => r.json()).then(d => {
+        showLoading(false);
+        if (d.success) alert('Saved!');
+        else alert(d.error || 'Save failed');
+        listFiles();
+      }).catch(()=>showLoading(false));
+    }
+    function deleteFile() {
+      if (!selectedFile) return alert('No file selected');
+      showLoading(true);
+      fetch(apiUrl('/api/file'), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          path: cwd ? cwd + '/' + selectedFile : selectedFile
+        })
+      }).then(r => r.json()).then(d => {
+        showLoading(false);
+        if (d.success) alert('Deleted!');
+        else alert(d.error || 'Delete failed');
+        selectedFile = '';
+        hidePreview();
+        listFiles();
+      }).catch(()=>showLoading(false));
+    }
+    function createFile() {
+      const name = prompt('New file name:');
+      if (!name) return;
+      showLoading(true);
+      fetch(apiUrl('/api/file'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          path: cwd ? cwd + '/' + name : name,
+          content: ''
+        })
+      }).then(()=>{showLoading(false);listFiles();}).catch(()=>showLoading(false));
+    }
+    function createFolder() {
+      const name = prompt('New folder name:');
+      if (!name) return;
+      showLoading(true);
+      fetch(apiUrl('/api/file'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          path: cwd ? cwd + '/' + name : name,
+          content: null
+        })
+      }).then(()=>{showLoading(false);listFiles();}).catch(()=>showLoading(false));
+    }
+    function triggerUpload() {
+      document.getElementById('upload-input').click();
+    }
+    // Quota polling every 5 seconds
+    let quotaInterval = null;
+    function startQuotaPolling() {
+      if (quotaInterval) clearInterval(quotaInterval);
+      quotaInterval = setInterval(fetchUserQuota, 5000);
+    }
+    function stopQuotaPolling() {
+      if (quotaInterval) clearInterval(quotaInterval);
+    }
+    // Upload progress bar
+    function showUploadProgress(percent) {
+      const bar = document.getElementById('upload-progress-bar');
+      const inner = document.getElementById('upload-progress-inner');
+      bar.classList.remove('hidden');
+      bar.style.display = '';
+      inner.style.width = percent + '%';
+    }
+    function hideUploadProgress() {
+      const bar = document.getElementById('upload-progress-bar');
+      const inner = document.getElementById('upload-progress-inner');
+      inner.style.width = '0%';
+      setTimeout(() => {
+        bar.classList.add('hidden');
+        bar.style.display = 'none';
+      }, 500);
+    }
+    function uploadFiles(event) {
+      const files = event.target.files;
+      if (!files.length) return;
+      // Check quota before uploading
+      let totalSize = 0;
+      for (let i = 0; i < files.length; ++i) totalSize += files[i].size;
+      // Convert bytes to GB
+      let totalSizeGB = totalSize / (1024 * 1024 * 1024);
+      let newUsed = (userQuota.usedGB || 0) + totalSizeGB;
+      if (userQuota.limitGB > 0 && newUsed > userQuota.limitGB + 0.0001) {
+        alert("Upload would exceed your storage limit of " + userQuota.limitGB + " GB. Please delete files or contact admin.");
+        event.target.value = ""; // reset file input
+        return;
+      }
+      showLoading(true);
+      showUploadProgress(0);
+      let done = 0;
+      Array.from(files).forEach((file, idx) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          // Simulate progress for each file
+          let progress = Math.round(((done + 0.5) / files.length) * 100);
+          showUploadProgress(progress);
+          fetch(apiUrl('/api/file'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+            body: JSON.stringify({
+              path: cwd ? cwd + '/' + file.name : file.name,
+              content: e.target.result
+            })
+          }).then(async (resp) => {
+            done++;
+            let progress = Math.round((done / files.length) * 100);
+            showUploadProgress(progress);
+            if (!resp.ok) {
+              let msg = "Upload failed";
+              try {
+                const data = await resp.json();
+                if (data && data.error) msg = data.error;
+              } catch {}
+              alert(msg);
+            }
+            if (done === files.length) {
+              showLoading(false);
+              setTimeout(hideUploadProgress, 700);
+              listFiles();
+              fetchUserQuota(); // update quota after upload
+            }
+          }).catch(()=>{
+            showLoading(false);
+            hideUploadProgress();
+          });
+        };
+        reader.readAsText(file);
+      });
+    }
+    function downloadFile(name) {
+      showLoading(true);
+      fetch(apiUrl('/api/file?path=' + encodeURIComponent(cwd ? cwd + '/' + name : name)), {
+        headers: { Authorization: 'Bearer ' + token }
+      }).then(r => r.json()).then(d => {
+        showLoading(false);
+        const blob = new Blob([d.content], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+      }).catch(()=>showLoading(false));
+    }
+    function downloadSelected() {
+      if (!selectedFile) return;
+      downloadFile(selectedFile);
+    }
+    // Rename
+    function startRename(name) {
+      renameMode = name;
+      renderFileList(filesCache);
+    }
+    function renameKey(e, oldName, isDir) {
+      if (e.key === 'Enter') {
+        finishRename(oldName, e.target.value, isDir);
+      } else if (e.key === 'Escape') {
+        renameMode = null;
+        renderFileList(filesCache);
+      }
+    }
+    function finishRename(oldName, newName, isDir) {
+      if (!newName || newName === oldName) { renameMode = null; renderFileList(filesCache); return; }
+      fetch(apiUrl('/api/file'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          path: cwd ? cwd + '/' + oldName : oldName,
+          newName: newName,
+          isDir: isDir
+        })
+      }).then(() => { renameMode = null; listFiles(); });
+    }
+    // Properties
+    function showProperties(name, isDir) {
+      const dialog = document.getElementById('properties-dialog');
+      dialog.innerHTML = `<h4>Properties</h4><b>Name:</b> ${name}<br><b>Type:</b> ${isDir?'Folder':'File'}<br><button onclick='closeProperties()'>Close</button>`;
+      dialog.classList.remove('hidden');
+    }
+    function closeProperties() {
+      document.getElementById('properties-dialog').classList.add('hidden');
+    }
+    // Context menu
+    document.addEventListener('click', ()=>hideContextMenu());
+    function showContextMenu(e, name, isDir) {
+      e.preventDefault();
+      contextMenuFile = { name, isDir };
+      const menu = document.getElementById('context-menu');
+      menu.innerHTML =
+        (isDir ? `<div onclick="enterDir('${name}')">Open</div>` : `<div onclick="openFile('${name}')">View</div>`)+
+        (!isDir ? `<div onclick="downloadFile('${name}')">Download</div>` : '')+
+        `<div onclick="startRename('${name}')">Rename</div>`+
+        `<div onclick="showProperties('${name}',${isDir})">Properties</div>`+
+        `<div onclick="deleteFile()">Delete</div>`;
+      menu.style.display = 'block';
+      menu.style.left = e.pageX + 'px';
+      menu.style.top = e.pageY + 'px';
+    }
+    function hideContextMenu() {
+      document.getElementById('context-menu').style.display = 'none';
+    }
+    // Owner settings
+    // Remove ownerSwitchesRevealed logic
+    // Show owner switches only if role is 'owner'
+    document.addEventListener('DOMContentLoaded', function() {
+      if (token && role === 'owner') {
+        document.getElementById('owner-switches').classList.remove('hidden');
+      } else {
+        document.getElementById('owner-switches').classList.add('hidden');
+      }
+    });
+    // Helper: Confirm owner with server before owner actions
+    async function confirmOwner() {
+      if (!token) return false;
+      const resp = await fetch(apiUrl('/api/admin/verify-owner'), {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token }
+      });
+      const data = await resp.json();
+      return !!data.isOwner;
+    }
+    // Upload limit
+    // In setUploadLimit, remove the owner password prompt for simplicity
+    async function setUploadLimit() {
+      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      let val = document.getElementById('upload-limit').value;
+      let origVal = val;
+      // Parse units
+      let mb = 0;
+      if (typeof val === 'string') {
+        val = val.trim().toLowerCase();
+        if (val.endsWith('gb')) mb = parseFloat(val) * 1024;
+        else if (val.endsWith('mb')) mb = parseFloat(val);
+        else if (val.endsWith('kb')) mb = parseFloat(val) / 1024;
+        else if (val.endsWith('bytes')) mb = parseFloat(val) / (1024 * 1024);
+        else mb = parseFloat(val);
+      } else {
+        mb = Number(val);
+      }
+      if (isNaN(mb) || mb <= 0) return alert('Invalid value for upload limit: ' + origVal);
+      showLoading(true);
+      fetch(apiUrl('/api/admin/settings'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          key: 'uploadLimit',
+          value: val // send the original string, not just MB
+        })
+      }).then(r=>r.json()).then(d=>{
+        showLoading(false);
+        if (!d.success) alert('Failed to update upload limit: ' + (d.error||''));
+      });
+    }
+    // Owner switches (with owner check)
+    async function toggleSetting(key) {
+      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      const val = document.getElementById('switch-' + key).checked;
+      const password = prompt('Enter owner password to change this setting:');
+      if (!password) { if (role === 'owner') await loadOwnerSettings(); return; }
+      const hash = await sha256(password);
+      showLoading(true);
+      fetch(apiUrl('/api/admin/settings'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          key,
+          value: val,
+          ownerHash: hash
+        })
+      }).then(r=>r.json()).then(d=>{
+        showLoading(false);
+        if (!d.success) {
+          alert('Failed to update setting: ' + (d.error||''));
+          if (role === 'owner') loadOwnerSettings();
+        }
+      });
+    }
+    // Users modal logic
+    async function showUsersModal() {
+      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      showLoading(true);
+      fetch(apiUrl('/api/admin/users'), {
+        headers: { Authorization: 'Bearer ' + token }
+      }).then(r=>r.json()).then(users=>{
+        showLoading(false);
+        let html = `<table style="width:100%;border-collapse:collapse;">
+          <tr>
+            <th>Username</th>
+            <th>Password</th>
+            <th>Status</th>
+            <th>Storage Limit</th>
+            <th>Actions</th>
+          </tr>`;
+        users.forEach(u=>{
+          html += `<tr>
+            <td>${u.username}</td>
+            <td>
+              <input type="text" value="${u.password || ''}" id="pw-${u.username}" style="width:90px;">
+              <button onclick="changeUserPassword('${u.username}')">Set</button>
+            </td>
+            <td>${u.disabled ? '<span style="color:red;">Disabled</span>' : '<span style="color:green;">Active</span>'}</td>
+            <td>
+              <input type="text" value="${u.limitGB !== null && u.limitGB !== undefined ? u.limitGB : ''}" id="limit-${u.username}" style="width:60px;">
+              <button onclick="changeUserLimit('${u.username}')">Set</button>
+            </td>
+            <td>
+              <button onclick="toggleUser('${u.username}',${u.disabled})">${u.disabled ? 'Enable' : 'Disable'}</button>
+              <button onclick="deleteUser('${u.username}')">Delete</button>
+            </td>
+          </tr>`;
+        });
+        html += `</table>`;
+        document.getElementById('users-list').innerHTML = html;
+        // Show modal
+        const modal = document.getElementById('users-modal');
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+      }).catch(()=>showLoading(false));
+    }
+    function closeUsersModal() {
+      const modal = document.getElementById('users-modal');
+      modal.classList.add('hidden');
+      modal.style.display = 'none';
+    }
+    async function changeUserPassword(username) {
+      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      const newpw = document.getElementById('pw-' + username).value;
+      if (!newpw) return alert('Password required');
+      showLoading(true);
+      fetch(apiUrl('/api/admin/user-password'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ username, password: newpw })
+      }).then(r=>r.json()).then(d=>{
+        showLoading(false);
+        if (!d.success) alert('Failed: ' + (d.error||''));
+        else alert('Password changed!');
+      }).catch(()=>showLoading(false));
+    }
+    async function changeUserLimit(username) {
+      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      const val = document.getElementById('limit-' + username).value;
+      if (!val) return alert('Limit required');
+      // Accept values like "10GB", "500MB", "10000KB", "1000000bytes"
+      showLoading(true);
+      fetch(apiUrl('/api/admin/user-limit'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ username, limitGB: parseUserLimitToGB(val) })
+      }).then(r=>r.json()).then(d=>{
+        showLoading(false);
+        if (!d.success) alert('Failed: ' + (d.error||''));
+        else showUsersModal();
+      }).catch(()=>showLoading(false));
+    }
+    // Helper to parse user input to GB (float)
+    function parseUserLimitToGB(val) {
+      let v = val.trim().toLowerCase();
+      if (v.endsWith('gb')) return parseFloat(v);
+      if (v.endsWith('mb')) return parseFloat(v) / 1024;
+      if (v.endsWith('kb')) return parseFloat(v) / (1024*1024);
+      if (v.endsWith('bytes')) return parseFloat(v) / (1024*1024*1024);
+      return parseFloat(v);
+    }
+
+    async function toggleUser(username, disabled) {
+      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      showLoading(true);
+      fetch(apiUrl('/api/admin/user-disable'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ username, disable: !disabled })
+      }).then(r=>r.json()).then(d=>{
+        showLoading(false);
+        if (!d.success) alert('Failed: ' + (d.error||''));
+        else showUsersModal();
+      }).catch(()=>showLoading(false));
+    }
+    async function deleteUser(username) {
+      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      if (!confirm('Delete user ' + username + '?')) return;
+      showLoading(true);
+      fetch(apiUrl('/api/admin/user-delete'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ username })
+      }).then(r=>r.json()).then(d=>{
+        showLoading(false);
+        if (!d.success) alert('Failed: ' + (d.error||''));
+        else showUsersModal();
+      }).catch(()=>showLoading(false));
+    }
+
+    // Helper: Get user quota info from server (use new public endpoint)
+    let userQuota = { usedGB: 0, limitGB: 0 }; // Store quota globally
+
+    async function fetchUserQuota() {
+      const user = getUsername();
+      if (!user) return;
+      try {
+        const resp = await fetch(apiUrl('/api/limit/' + encodeURIComponent(user)));
+        const data = await resp.json();
+        let used = (typeof data.usedGB === 'number') ? data.usedGB : 0;
+        let limit = (typeof data.limitGB === 'number' && data.limitGB > 0) ? data.limitGB : 5;
+        userQuota = { usedGB: used, limitGB: limit };
+        showUserQuota(used, limit);
+      } catch (e) {
+        userQuota = { usedGB: 0, limitGB: 5 };
+        showUserQuota(0, 5);
+      }
+    }
+
+    function showUserQuota(usedGB, limitGB) {
+      // Always show at least a small bar if used > 0
+      let used = usedGB;
+      let limit = limitGB;
+      let unit = "GB";
+      // If both are < 1GB, show MB
+      if ((limitGB < 1 && limitGB > 0) || (usedGB < 1 && usedGB > 0)) {
+        used = usedGB * 1024;
+        limit = limitGB * 1024;
+        unit = "MB";
+      }
+      // If both are < 0.01GB/MB, show KB
+      if ((limit < 0.01 && limit > 0) || (used < 0.01 && used > 0)) {
+        used = used * 1024;
+        limit = limit * 1024;
+        unit = "KB";
+      }
+      // Always show at least 0.01 for used if > 0
+      if (used > 0 && used < 0.01) used = 0.01;
+      const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+      let color = percent < 70 ? "#2d5be3" : percent < 90 ? "#e6a700" : "#d32f2f";
+      document.getElementById('user-quota').innerHTML =
+        `<b>Storage:</b> ${used.toFixed(2)} ${unit} / ${limit} ${unit}
+        <div style="background:#eee;border-radius:6px;height:12px;width:220px;display:inline-block;vertical-align:middle;margin-left:10px;">
+          <div style="background:${color};height:12px;border-radius:6px;width:${percent}%;"></div>
+        </div>
+        <span style="margin-left:8px;font-size:0.95em;color:${color};">${percent}%</span>
+        <button id="quota-details-btn" style="margin-left:10px;font-size:0.95em;vertical-align:middle;">Details</button>`;
+      // Attach event listener for details button
+      setTimeout(() => {
+        const btn = document.getElementById('quota-details-btn');
+        if (btn) btn.onclick = showQuotaDetails;
+      }, 0);
+    }
+
+    function showQuotaDetails() {
+      // Calculate all units
+      const usedGB = userQuota.usedGB || 0;
+      const limitGB = userQuota.limitGB || 0;
+      const usedMB = usedGB * 1024;
+      const limitMB = limitGB * 1024;
+      const usedKB = usedMB * 1024;
+      const limitKB = limitMB * 1024;
+      const usedBytes = usedKB * 1024;
+      const limitBytes = limitKB * 1024;
+      alert(
+        `Storage Usage:\n` +
+        `GB: ${usedGB.toFixed(4)} / ${limitGB} GB\n` +
+        `MB: ${usedMB.toFixed(2)} / ${limitMB} MB\n` +
+        `KB: ${usedKB.toFixed(0)} / ${limitKB.toFixed(0)} KB\n` +
+        `Bytes: ${usedBytes.toFixed(0)} / ${limitBytes.toFixed(0)} bytes`
+      );
+    }
+
+    // Fetch and set upload limit from server settings on load (for owner)
+    async function setOwnerSettingsUI() {
+      if (role === 'owner') {
+        try {
+          const resp = await fetch(apiUrl('/api/admin/settings'), {
+            headers: { Authorization: 'Bearer ' + token }
+          });
+          const settings = await resp.json();
+          if (settings.uploadLimit) {
+            document.getElementById('upload-limit').value = settings.uploadLimit;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    // On load
+    if (token) {
+      showAuth(false);
+      // Always use getUsername for display
+      document.getElementById('user-info').innerText = 'Logged in as ' + (getUsername() || role) + ' (' + role + ')';
+      refreshFiles();
+      fetchUserQuota();
+      startQuotaPolling();
+      if (role === 'owner') {
+        document.getElementById('owner-switches').classList.remove('hidden');
+        setOwnerSettingsUI();
+      } else {
+        document.getElementById('owner-switches').classList.add('hidden');
+      }
+    } else {
+      showAuth(true);
+      document.getElementById('owner-switches').classList.add('hidden');
+      stopQuotaPolling();
+    }
+
+    // Also refresh quota after file operations
+    function refreshFiles() { listFiles(); fetchUserQuota(); }
+
+    // Add a no-op for hideAllAdminModals to prevent errors if not defined
+    function hideAllAdminModals() {
+      // No-op: implement if you have admin modals to hide
+    }
+
+    // Drag and drop upload
+    const dropOverlay = document.getElementById('drop-overlay');
+    document.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      dropOverlay.classList.add('active');
+    });
+    document.addEventListener('dragleave', function(e) {
+      if (e.target === dropOverlay || e.pageX <= 0 || e.pageY <= 0) {
+        dropOverlay.classList.remove('active');
+      }
+    });
+    document.addEventListener('drop', function(e) {
+      e.preventDefault();
+      dropOverlay.classList.remove('active');
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+        uploadFiles({ target: { files: e.dataTransfer.files } });
+      }
+    });
+
+    // Custom right-click context menu for file list
+    const customMenu = document.getElementById('custom-context-menu');
+    document.getElementById('file-list').addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+      let target = e.target.closest('.file-row');
+      if (!target) return;
+      const name = target.querySelector('.file-name').innerText;
+      const isDir = target.querySelector('.file-icon').innerText === '📁';
+      showCustomContextMenu(e.pageX, e.pageY, name, isDir);
+    });
+
+    function showCustomContextMenu(x, y, name, isDir) {
+      let html = '';
+      if (isDir) {
+        html += `<div class="item" onclick="enterDir('${name}')">Open</div>`;
+      } else {
+        html += `<div class="item" onclick="openFile('${name}')">View</div>`;
+        html += `<div class="item" onclick="downloadFile('${name}')">Download</div>`;
+      }
+      html += `<div class="item" onclick="startRename('${name}')">Rename</div>`;
+      html += `<div class="item" onclick="showProperties('${name}',${isDir})">Properties</div>`;
+      if (selectedFiles.size > 1) {
+        html += `<div class="item" onclick="deleteSelectedFiles()">Delete Selected (${selectedFiles.size})</div>`;
+      } else {
+        html += `<div class="item" onclick="deleteFile()">Delete</div>`;
+      }
+      customMenu.innerHTML = html;
+      customMenu.style.display = 'block';
+      customMenu.style.left = x + 'px';
+      customMenu.style.top = y + 'px';
+      setTimeout(() => {
+        document.addEventListener('click', hideCustomContextMenu, { once: true });
+      }, 0);
+    }
+    function hideCustomContextMenu() {
+      customMenu.style.display = 'none';
+    }
+
+    // Keyboard shortcuts for file actions (like Windows Explorer)
+    document.addEventListener('keydown', function(e) {
+      if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+      if (e.key === 'Delete' && selectedFiles.size > 0) {
+        deleteSelectedFiles();
+        e.preventDefault();
+      }
+      if (e.key === 'F2' && selectedFiles.size === 1) {
+        startRename([...selectedFiles][0]);
+        e.preventDefault();
+      }
+      if (e.ctrlKey && e.key.toLowerCase() === 'a') {
+        // Select all files
+        selectedFiles = new Set(filesCache.map(f => f.name));
+        renderFileList(filesCache);
+        e.preventDefault();
+      }
+      if (e.key === 'Enter' && selectedFiles.size === 1) {
+        const name = [...selectedFiles][0];
+        const file = filesCache.find(f => f.name === name);
+        if (file) {
+          if (file.isDir) enterDir(name);
+          else openFile(name);
+          e.preventDefault();
+        }
+      }
+    });
+
+    // Delete multiple files
+    function deleteSelectedFiles() {
+      if (selectedFiles.size === 0) return;
+      if (!confirm(`Delete ${selectedFiles.size} file(s)?`)) return;
+      showLoading(true);
+      let filesToDelete = [...selectedFiles];
+      let done = 0;
+      let failed = 0;
+      function finish() {
+        showLoading(false);
+        selectedFiles.clear();
+        selectedFile = '';
+        hidePreview();
+        listFiles();
+        if (failed > 0) alert(`${failed} file(s) failed to delete.`);
+      }
+      filesToDelete.forEach(name => {
+        fetch(apiUrl('/api/file'), {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify({
+            path: cwd ? cwd + '/' + name : name
+          })
+        }).then(r => r.json()).then(d => {
+          if (!d.success) failed++;
+          done++;
+          if (done === filesToDelete.length) finish();
+        }).catch(() => {
+          failed++; done++;
+          if (done === filesToDelete.length) finish();
+        });
+      });
+    }
+
+    // Multi-select support in context menu
+    function showCustomContextMenu(x, y, name, isDir) {
+      let html = '';
+      if (isDir) {
+        html += `<div class="item" onclick="enterDir('${name}')">Open</div>`;
+      } else {
+        html += `<div class="item" onclick="openFile('${name}')">View</div>`;
+        html += `<div class="item" onclick="downloadFile('${name}')">Download</div>`;
+      }
+      html += `<div class="item" onclick="startRename('${name}')">Rename</div>`;
+      html += `<div class="item" onclick="showProperties('${name}',${isDir})">Properties</div>`;
+      if (selectedFiles.size > 1) {
+        html += `<div class="item" onclick="deleteSelectedFiles()">Delete Selected (${selectedFiles.size})</div>`;
+      } else {
+        html += `<div class="item" onclick="deleteFile()">Delete</div>`;
+      }
+      customMenu.innerHTML = html;
+      customMenu.style.display = 'block';
+      customMenu.style.left = x + 'px';
+      customMenu.style.top = y + 'px';
+      setTimeout(() => {
+        document.addEventListener('click', hideCustomContextMenu, { once: true });
+      }, 0);
+    }
+
+    // Add this near the top of your <script> tag, before any function uses showLoading
+    function showLoading(show) {
+      const bar = document.getElementById('loading-bar');
+      if (bar) bar.style.display = show ? '' : 'none';
+    }
+  </script>
+</body>
+</html>

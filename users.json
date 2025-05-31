@@ -1,0 +1,8 @@
+{
+  "owner": {
+    "password": "$2a$10$wO35od8JxbJeDaoegLKRkuuwEhxYqGx/7hXks1xGVnN//ACB5.jtO",
+    "role": "owner",
+    "limitGB": 20,
+    "plain": "ownerpass"
+  }
+}
