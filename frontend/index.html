@@ -181,7 +181,7 @@
         <button onclick="goUp()">⬆ Up</button>
         <button onclick="refreshFiles()">🔄 Refresh</button>
         <button onclick="triggerUpload()">⬆ Upload</button>
-        <input type="file" id="upload-input" multiple onchange="uploadFiles(event)">
+        <input type="file" id="upload-input" multiple webkitdirectory directory onchange="uploadFiles(event)">
         <button onclick="createFolder()">📁 New Folder</button>
         <button onclick="createFile()">📄 New File</button>
         <div id="breadcrumbs"></div>
@@ -601,13 +601,12 @@
         bar.style.display = 'none';
       }, 500);
     }
-    function uploadFiles(event) {
+    async function uploadFiles(event) {
       const files = event.target.files;
       if (!files.length) return;
-      // Check quota before uploading
+      // Calculate total size for quota check
       let totalSize = 0;
       for (let i = 0; i < files.length; ++i) totalSize += files[i].size;
-      // Convert bytes to GB
       let totalSizeGB = totalSize / (1024 * 1024 * 1024);
       let newUsed = (userQuota.usedGB || 0) + totalSizeGB;
       if (userQuota.limitGB > 0 && newUsed > userQuota.limitGB + 0.0001) {
@@ -618,17 +617,20 @@
       showLoading(true);
       showUploadProgress(0);
       let done = 0;
+      // For folder upload, preserve relative paths
+      const cwdPrefix = cwd ? cwd + '/' : '';
       Array.from(files).forEach((file, idx) => {
+        const relPath = file.webkitRelativePath || file.name;
+        const uploadPath = cwdPrefix + relPath;
         const reader = new FileReader();
         reader.onload = function(e) {
-          // Simulate progress for each file
           let progress = Math.round(((done + 0.5) / files.length) * 100);
           showUploadProgress(progress);
           fetch(apiUrl('/api/file'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
             body: JSON.stringify({
-              path: cwd ? cwd + '/' + file.name : file.name,
+              path: uploadPath,
               content: e.target.result
             })
           }).then(async (resp) => {
@@ -647,7 +649,7 @@
               showLoading(false);
               setTimeout(hideUploadProgress, 700);
               listFiles();
-              fetchUserQuota(); // update quota after upload
+              fetchUserQuota();
             }
           }).catch(()=>{
             showLoading(false);
