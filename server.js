@@ -504,3 +504,27 @@ function startFtpServer() {
 ensureOwner();
 startServer();
 startFtpServer();
+
+// --- MOVE THIS BLOCK UP HERE ---
+function auth(requiredRole) {
+  return (req, res, next) => {
+    let token = req.headers['authorization']?.split(' ')[1];
+    // Try cookie if not in header
+    if (!token && req.headers.cookie) {
+      const m = req.headers.cookie.match(/(?:^|;\s*)token=([^;]+)/);
+      if (m && m[1]) token = decodeURIComponent(m[1]);
+    }
+    if (!token) return res.status(401).json({ error: 'No token' });
+    try {
+      const payload = jwt.verify(token, JWT_SECRET);
+      req.user = payload;
+      if (requiredRole && payload.role !== requiredRole) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      next();
+    } catch {
+      res.status(401).json({ error: 'Invalid token' });
+    }
+  };
+}
+// --- END MOVE ---
