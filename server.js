@@ -362,11 +362,11 @@ app.get('/api/limit/:username', (req, res) => {
   let username = req.params.username;
   if (!username) return res.status(400).json({ error: 'Username required' });
   const users = loadUsers();
-  // --- Fix: Case-insensitive username lookup ---
+  // Case-insensitive username lookup
   const userKey = Object.keys(users).find(u => u.toLowerCase() === username.toLowerCase());
   const user = userKey ? users[userKey] : null;
   if (!user) return res.status(404).json({ error: 'User not found' });
-  let limitGB = user.limitGB !== undefined ? user.limitGB : (user.role === 'owner' ? null : 5);
+  let limitGB = user.limitGB !== undefined && user.limitGB !== null ? user.limitGB : (user.role === 'owner' ? null : 5);
   let userDir = path.resolve(STORAGE_DIR, userKey);
 
   // Only count files, not folders, and follow symlinks
@@ -392,7 +392,8 @@ app.get('/api/limit/:username', (req, res) => {
 
   const usedBytes = getDirSize(userDir);
   const usedGB = +(usedBytes / (1024 * 1024 * 1024)).toFixed(4);
-  res.json({ usedGB, limitGB });
+  // Always return both fields, even if 0
+  res.json({ usedGB: usedGB || 0, limitGB: limitGB || 0 });
 });
 
 // Serve user files for preview/download: /api/storage/:username/*
