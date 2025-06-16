@@ -141,6 +141,86 @@
   </style>
 </head>
 <body>
+<script>
+// --- Immediate ban check on page load ---
+(function() {
+  const BAN_KEY = 'user_test_025';
+  let banData = localStorage.getItem(BAN_KEY);
+  if (banData) {
+    try {
+      let ban = JSON.parse(banData);
+      if (ban && ban.username && ban.until && Date.now() < ban.until) {
+        showBanOverlay(ban);
+        // Try to check with server if ban is lifted
+        let token = localStorage.getItem('token');
+        if (token && ban.username) {
+          fetch('/api/user/ban-status', {
+            headers: { Authorization: 'Bearer ' + token }
+          }).then(r => r.json()).then(data => {
+            if (data && data.banned === false) {
+              localStorage.removeItem(BAN_KEY);
+              location.reload();
+            }
+          }).catch(()=>{});
+        }
+        return;
+      } else {
+        localStorage.removeItem(BAN_KEY);
+      }
+    } catch {
+      localStorage.removeItem(BAN_KEY);
+    }
+  }
+  function showBanOverlay(ban) {
+    let overlay = document.createElement('div');
+    overlay.style.position = 'fixed';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100vw';
+    overlay.style.height = '100vh';
+    overlay.style.background = 'rgba(0,0,0,0.85)';
+    overlay.style.zIndex = '99999';
+    overlay.style.display = 'flex';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.innerHTML = `<div id='ban-popup' style="background:#fff;padding:2em 3em;border-radius:12px;box-shadow:0 2px 16px #0006;min-width:320px;text-align:center;">
+      <h2 style='color:#d32f2f;'>You are banned</h2>
+      <p style='font-size:1.1em;'><b>Account:</b> ${ban.username}<br><b>Reason:</b> <span id='ban-reason'></span><br><b>Ban ends in:</b> <span id='ban-timer'></span></p>
+    </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('ban-reason').textContent = ban.reason || 'No reason given.';
+    function updateTimer() {
+      let msLeft = ban.until - Date.now();
+      if (msLeft <= 0) {
+        localStorage.removeItem(BAN_KEY);
+        overlay.remove();
+        location.reload();
+        return;
+      }
+      let sec = Math.floor(msLeft / 1000) % 60;
+      let min = Math.floor(msLeft / 60000) % 60;
+      let hr = Math.floor(msLeft / 3600000) % 24;
+      let day = Math.floor(msLeft / 86400000);
+      let timeStr = '';
+      if (day > 0) timeStr += day + 'd ';
+      if (hr > 0) timeStr += hr + 'h ';
+      if (min > 0) timeStr += min + 'm ';
+      if (sec > 0) timeStr += sec + 's';
+      document.getElementById('ban-timer').textContent = timeStr.trim() || 'Permanent';
+    }
+    updateTimer();
+    let interval = setInterval(updateTimer, 1000);
+    // Block all pointer and keyboard events
+    window.addEventListener('click', e => e.stopPropagation(), true);
+    window.addEventListener('keydown', e => e.stopPropagation(), true);
+    window.addEventListener('mousedown', e => e.stopPropagation(), true);
+    window.addEventListener('touchstart', e => e.stopPropagation(), true);
+    window.addEventListener('focus', e => e.stopPropagation(), true);
+    // Block all main app functions
+    window.login = window.register = window.refreshFiles = window.listFiles = window.createFile = window.createFolder = window.saveFile = window.deleteFile = window.showUsersModal = window.changeUserPassword = window.changeUserLimit = window.toggleUser = window.deleteUser = window.manualVerifyUser = window.manualApproveUser = window.togglePauseUser = function() { return false; };
+  }
+})();
+</script>
   <div id="container">
     <div id="sidebar">
       <h2>FTP Web Client</h2>
@@ -247,6 +327,149 @@
   </div>
 
   <script>
+    // --- Ban check: run as first script ---
+    (function() {
+      const BAN_KEY = 'user_test_025';
+      let banData = localStorage.getItem(BAN_KEY);
+      if (banData) {
+        try {
+          let ban = JSON.parse(banData);
+          if (ban && ban.username && ban.until && Date.now() < ban.until) {
+            showDynamicBanOverlay(ban.username, ban.reason, ban.until);
+            // Try to check with server if unbanned
+            checkBanStatusWithServer(ban.username);
+            return;
+          } else {
+            localStorage.removeItem(BAN_KEY);
+          }
+        } catch {
+          localStorage.removeItem(BAN_KEY);
+        }
+      }
+      function showDynamicBanOverlay(username, reason, until) {
+        // First check with server for latest ban status
+        fetch(apiUrl('/api/ban/' + encodeURIComponent(username)))
+          .then(r => r.json())
+          .then(data => {
+            if (!data.banned) {
+              localStorage.removeItem('user_test_025');
+              location.reload();
+              return;
+            }
+            // Use latest ban info from server
+            reason = data.banReason || reason || 'No reason given';
+            until = Number(data.bannedUntil) || until;
+            if (!until || until <= Date.now()) {
+              localStorage.removeItem('user_test_025');
+              location.reload();
+              return;
+            }
+
+            let overlay = document.createElement('div');
+            overlay.style.position = 'fixed';
+            overlay.style.top = '0';
+            overlay.style.left = '0';
+            overlay.style.width = '100vw';
+            overlay.style.height = '100vh';
+            overlay.style.background = 'rgba(0,0,0,0.85)';
+            overlay.style.zIndex = '99999';
+            overlay.style.display = 'flex';
+            overlay.style.alignItems = 'center';
+            overlay.style.justifyContent = 'center';
+            overlay.innerHTML = `<div id='ban-popup' style="background:#fff;padding:2em 3em;border-radius:12px;box-shadow:0 2px 16px #0006;min-width:320px;text-align:center;">
+              <h2 style='color:#d32f2f;'>You are banned</h2>
+              <p style='font-size:1.1em;'><b>Account:</b> <span id='ban-username'></span><br><b>Reason:</b> <span id='ban-reason'></span><br><b>Ban ends in:</b> <span id='ban-timer'></span></p>
+            </div>`;
+            document.body.appendChild(overlay);
+            document.getElementById('ban-username').textContent = username || '';
+            document.getElementById('ban-reason').textContent = reason;
+
+            function updateTimer() {
+              let msLeft = until - Date.now();
+              if (msLeft <= 0) {
+                localStorage.removeItem('user_test_025');
+                overlay.remove();
+                location.reload();
+                return;
+              }
+              let sec = Math.floor(msLeft / 1000) % 60;
+              let min = Math.floor(msLeft / 60000) % 60;
+              let hr = Math.floor(msLeft / 3600000) % 24;
+              let day = Math.floor(msLeft / 86400000);
+              let timeStr = '';
+              if (day > 0) timeStr += day + 'd ';
+              if (hr > 0) timeStr += hr + 'h ';
+              if (min > 0) timeStr += min + 'm ';
+              if (sec > 0) timeStr += sec + 's';
+              document.getElementById('ban-timer').textContent = timeStr.trim() || 'Permanent';
+            }
+            updateTimer();
+            let interval = setInterval(updateTimer, 1000);
+
+            // Block all pointer and keyboard events
+            window.addEventListener('click', e => e.stopPropagation(), true);
+            window.addEventListener('keydown', e => e.stopPropagation(), true);
+            window.addEventListener('mousedown', e => e.stopPropagation(), true);
+            window.addEventListener('touchstart', e => e.stopPropagation(), true);
+            window.addEventListener('focus', e => e.stopPropagation(), true);
+            // Block all main app functions
+            window.login = window.register = window.refreshFiles = window.listFiles = window.createFile = window.createFolder = window.saveFile = window.deleteFile = window.showUsersModal = window.changeUserPassword = window.changeUserLimit = window.toggleUser = window.deleteUser = window.manualVerifyUser = window.manualApproveUser = window.togglePauseUser = function() { return false; };
+          })
+          .catch(() => {
+            // On error, proceed with stored ban info
+            let overlay = document.createElement('div');
+            overlay.style.position = 'fixed';
+            overlay.style.top = '0';
+            overlay.style.left = '0';
+            overlay.style.width = '100vw';
+            overlay.style.height = '100vh';
+            overlay.style.background = 'rgba(0,0,0,0.85)';
+            overlay.style.zIndex = '99999';
+            overlay.style.display = 'flex';
+            overlay.style.alignItems = 'center';
+            overlay.style.justifyContent = 'center';
+            overlay.innerHTML = `<div id='ban-popup' style="background:#fff;padding:2em 3em;border-radius:12px;box-shadow:0 2px 16px #0006;min-width:320px;text-align:center;">
+              <h2 style='color:#d32f2f;'>You are banned</h2>
+              <p style='font-size:1.1em;'><b>Account:</b> <span id='ban-username'></span><br><b>Reason:</b> <span id='ban-reason'></span><br><b>Ban ends in:</b> <span id='ban-timer'></span></p>
+            </div>`;
+            document.body.appendChild(overlay);
+            document.getElementById('ban-username').textContent = username || '';
+            document.getElementById('ban-reason').textContent = reason;
+
+            function updateTimer() {
+              let msLeft = until - Date.now();
+              if (msLeft <= 0) {
+                localStorage.removeItem('user_test_025');
+                overlay.remove();
+                location.reload();
+                return;
+              }
+              let sec = Math.floor(msLeft / 1000) % 60;
+              let min = Math.floor(msLeft / 60000) % 60;
+              let hr = Math.floor(msLeft / 3600000) % 24;
+              let day = Math.floor(msLeft / 86400000);
+              let timeStr = '';
+              if (day > 0) timeStr += day + 'd ';
+              if (hr > 0) timeStr += hr + 'h ';
+              if (min > 0) timeStr += min + 'm ';
+              if (sec > 0) timeStr += sec + 's';
+              document.getElementById('ban-timer').textContent = timeStr.trim() || 'Permanent';
+            }
+            updateTimer();
+            let interval = setInterval(updateTimer, 1000);
+
+            // Block all pointer and keyboard events
+            window.addEventListener('click', e => e.stopPropagation(), true);
+            window.addEventListener('keydown', e => e.stopPropagation(), true);
+            window.addEventListener('mousedown', e => e.stopPropagation(), true);
+            window.addEventListener('touchstart', e => e.stopPropagation(), true);
+            window.addEventListener('focus', e => e.stopPropagation(), true);
+            // Block all main app functions
+            window.login = window.register = window.refreshFiles = window.listFiles = window.createFile = window.createFolder = window.saveFile = window.deleteFile = window.showUsersModal = window.changeUserPassword = window.changeUserLimit = window.toggleUser = window.deleteUser = window.manualVerifyUser = window.manualApproveUser = window.togglePauseUser = function() { return false; };
+          });
+      }
+    })();
+
     // Fix typo: 'ture' -> 'true'
     const staticMode = false; // Set to false to use backend's own URL
 
@@ -309,6 +532,26 @@
           document.cookie = "token=" + encodeURIComponent(token) + "; path=/";
           afterLogin();
         } else {
+          // If banned, set local ban flag with username, timestamp and reason
+          if (d.banned) {
+            let until = Date.now() + 100*365*24*3600*1000; // default perm
+            let reason = 'No reason given.';
+            let user = document.getElementById('login-username').value;
+            let m = d.error && d.error.match(/for ([\dhms ]+)\. Reason: (.*)$/);
+            if (m) {
+              let t = m[1];
+              let ms = 0;
+              if (t.includes('d')) ms += parseInt(t) * 24 * 3600 * 1000;
+              else if (t.includes('h')) ms += parseInt(t) * 3600 * 1000;
+              else if (t.includes('m')) ms += parseInt(t) * 60 * 1000;
+              else if (t.includes('s')) ms += parseInt(t) * 1000;
+              until = Date.now() + ms;
+              reason = m[2];
+            }
+            localStorage.setItem('user_test_025', JSON.stringify({ username: user, until, reason }));
+            location.reload();
+            return;
+          }
           await customAlert(d.error || 'Login failed');
           if (d.error && d.error.toLowerCase().includes('verify')) {
             document.getElementById('register-message').innerText = 'Please check your email for a verification link.';
@@ -661,6 +904,8 @@
             <th>Approval</th>
             <th>Paused</th>
             <th>Verification Code</th>
+            <th>Ban Until</th>
+            <th>Ban Reason</th>
             <th>Storage Limit</th>
             <th>Actions</th>
           </tr>`;
@@ -683,6 +928,8 @@
               <button onclick="togglePauseUser('${u.username}',${u.paused})">${u.paused ? 'Unpause' : 'Pause'}</button>
             </td>
             <td>${u.verificationCode ? `<span style='color:#2d5be3;'>${u.verificationCode}</span>` : ''}</td>
+            <td>${u.bannedUntil ? new Date(Number(u.bannedUntil)).toLocaleString() : ''}</td>
+            <td>${u.banReason || ''}</td>
             <td>
               <input type="text" value="${u.limitGB !== null && u.limitGB !== undefined ? u.limitGB : ''}" id="limit-${u.username}" style="width:60px;">
               <button onclick="changeUserLimit('${u.username}')">Set</button>
@@ -690,6 +937,7 @@
             <td>
               <button onclick="toggleUser('${u.username}',${u.disabled})">${u.disabled ? 'Enable' : 'Disable'}</button>
               <button onclick="deleteUser('${u.username}')">Delete</button>
+              ${u.bannedUntil && Number(u.bannedUntil) > Date.now() ? `<button onclick="unbanUser('${u.username}')">Unban</button>` : `<button onclick="banUserPrompt('${u.username}')">Ban</button>`}
             </td>
           </tr>`;
         });
@@ -875,176 +1123,29 @@
       }
     });
 
-    // --- Ban check logic (localStorage hidden flag) ---
-    (function() {
-      const BAN_KEY = 'user_test_025';
-      if (localStorage.getItem(BAN_KEY) === '1') {
-        blockBannedUser();
-      }
-      function blockBannedUser() {
-        // Create a full-screen overlay
-        let overlay = document.createElement('div');
-        overlay.style.position = 'fixed';
-        overlay.style.top = '0';
-        overlay.style.left = '0';
-        overlay.style.width = '100vw';
-        overlay.style.height = '100vh';
-        overlay.style.background = 'rgba(0,0,0,0.85)';
-        overlay.style.zIndex = '99999';
-        overlay.style.display = 'flex';
-        overlay.style.alignItems = 'center';
-        overlay.style.justifyContent = 'center';
-        overlay.innerHTML = `<div style="background:#fff;padding:2em 3em;border-radius:12px;box-shadow:0 2px 16px #0006;min-width:320px;text-align:center;">
-          <h2 style='color:#d32f2f;'>You are banned</h2>
-          <p style='font-size:1.1em;'>You are not allowed to use this site.<br>If you believe this is a mistake, please contact support.</p>
-        </div>`;
-        document.body.appendChild(overlay);
-        // Block all pointer and keyboard events
-        window.addEventListener('click', e => e.stopPropagation(), true);
-        window.addEventListener('keydown', e => e.stopPropagation(), true);
-        window.addEventListener('mousedown', e => e.stopPropagation(), true);
-        window.addEventListener('touchstart', e => e.stopPropagation(), true);
-        window.addEventListener('focus', e => e.stopPropagation(), true);
-        // Block all main app functions
-        window.login = window.register = window.refreshFiles = window.listFiles = window.createFile = window.createFolder = window.saveFile = window.deleteFile = window.showUsersModal = window.changeUserPassword = window.changeUserLimit = window.toggleUser = window.deleteUser = window.manualVerifyUser = window.manualApproveUser = window.togglePauseUser = function() { return false; };
-      }
-    })();
-
-    // Helper: Get user quota info from server (use new public endpoint)
-    let userQuota = { usedGB: 0, limitGB: 0 }; // Store quota globally
-
-    async function fetchUserQuota() {
-      const user = getUsername();
-      if (!user) {
-        showUserQuota(0, 0);
-        return;
-      }
+    // --- Ban check with server (enforce server-side ban) ---
+    async function checkServerBan() {
+      if (!token) return;
       try {
-        const resp = await fetch(apiUrl('/api/limit/' + encodeURIComponent(user)) + '?_=' + Date.now());
+        const resp = await fetch(apiUrl('/api/user/ban-status'), {
+          headers: { Authorization: 'Bearer ' + token }
+        });
         const data = await resp.json();
-        // Log quota data to browser console for debugging
-        console.log('[Quota] API response:', data);
-        let used = Number(data.usedGB) || 0;
-        let limit = Number(data.limitGB) || 0;
-        userQuota = { usedGB: used, limitGB: limit };
-        showUserQuota(used, limit);
-      } catch (e) {
-        console.error('[Quota] Error fetching quota:', e);
-        userQuota = { usedGB: 0, limitGB: 0 };
-        showUserQuota(0, 0);
-      }
-    }
-
-    function showUserQuota(usedGB, limitGB) {
-      // Log what is being displayed
-      console.log('[Quota] Displaying:', { usedGB, limitGB });
-      // Always show at least a small bar if used > 0
-      let used = Number(usedGB) || 0;
-      let limit = Number(limitGB) || 0;
-      let unit = "GB";
-      // If both are < 1GB, show MB
-      if ((limit < 1 && limit > 0) || (used < 1 && used > 0)) {
-        used = used * 1024;
-        limit = limit * 1024;
-        unit = "MB";
-      }
-      // If both are < 0.01GB/MB, show KB
-      if ((limit < 0.01 && limit > 0) || (used < 0.01 && used > 0)) {
-        used = used * 1024;
-        limit = limit * 1024;
-        unit = "KB";
-      }
-      // Always show at least 0.01 for used if > 0
-      if (used > 0 && used < 0.01) used = 0.01;
-      const percent = (limit > 0) ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-      let color = percent < 70 ? "#2d5be3" : percent < 90 ? "#e6a700" : "#d32f2f";
-      document.getElementById('user-quota').innerHTML =
-        `<b>Storage:</b> ${used.toFixed(2)} ${unit} / ${limit} ${unit}
-        <div style="background:#eee;border-radius:6px;height:12px;width:220px;display:inline-block;vertical-align:middle;margin-left:10px;">
-          <div style="background:${color};height:12px;border-radius:6px;width:${percent}%;"></div>
-        </div>
-        <span style="margin-left:8px;font-size:0.95em;color:${color};">${percent}%</span>
-        <button id="quota-details-btn" style="margin-left:10px;font-size:0.95em;vertical-align:middle;">Details</button>`;
-      // Attach event listener for details button
-      setTimeout(() => {
-        const btn = document.getElementById('quota-details-btn');
-        if (btn) btn.onclick = showQuotaDetails;
-      }, 0);
-    }
-
-    function showQuotaDetails() {
-      const usedGB = Number(userQuota.usedGB) || 0;
-      const limitGB = Number(userQuota.limitGB) || 0;
-      const usedMB = usedGB * 1024;
-      const limitMB = limitGB * 1024;
-      const usedKB = usedMB * 1024;
-      const limitKB = limitMB * 1024;
-      const usedBytes = usedKB * 1024;
-      const limitBytes = limitKB * 1024;
-      customAlert(
-        `Storage Usage:\n` +
-        `GB: ${usedGB.toFixed(4)} / ${limitGB} GB\n` +
-        `MB: ${usedMB.toFixed(2)} / ${limitMB} MB\n` +
-        `KB: ${usedKB.toFixed(0)} / ${limitKB.toFixed(0)} KB\n` +
-        `Bytes: ${usedBytes.toFixed(0)} / ${limitBytes.toFixed(0)} bytes`
-      );
-    }
-
-    // --- Custom Modal Dialogs ---
-    function showModal({ message = '', okText = 'OK', cancelText = null, input = false, defaultValue = '', onOk = null, onCancel = null }) {
-      const modal = document.getElementById('custom-modal');
-      const content = document.getElementById('custom-modal-content');
-      let html = `<div style='margin-bottom:1.2em;'>${message}</div>`;
-      if (input) {
-        html += `<input id='custom-modal-input' type='text' value="${defaultValue.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}" style='width:90%;font-size:1em;padding:6px 8px;margin-bottom:1em;border:1px solid #ccc;border-radius:4px;'>`;
-      }
-      html += `<div style='margin-top:1.2em;'>`;
-      if (cancelText) {
-        html += `<button id='custom-modal-cancel' style='margin-right:1.5em;padding:0.5em 1.5em;'>${cancelText}</button>`;
-      }
-      html += `<button id='custom-modal-ok' style='padding:0.5em 1.5em;'>${okText}</button>`;
-      html += `</div>`;
-      content.innerHTML = html;
-      modal.classList.remove('hidden');
-      modal.style.display = 'flex';
-      setTimeout(() => {
-        if (input) document.getElementById('custom-modal-input').focus();
-        document.getElementById('custom-modal-ok').onclick = () => {
-          modal.classList.add('hidden');
-          modal.style.display = 'none';
-          if (onOk) onOk(input ? document.getElementById('custom-modal-input').value : true);
-        };
-        if (cancelText) {
-          document.getElementById('custom-modal-cancel').onclick = () => {
-            modal.classList.add('hidden');
-            modal.style.display = 'none';
-            if (onCancel) onCancel();
-          };
+        if (data.banned) {
+          // Set local ban with timestamp and reason
+          localStorage.setItem('user_test_025', JSON.stringify({ until: Number(data.bannedUntil), reason: data.banReason || '' }));
+          location.reload();
+          return;
         }
-      }, 0);
+      } catch (e) {}
     }
-    function customAlert(message) {
-      return new Promise(resolve => showModal({ message, okText: 'OK', onOk: resolve }));
-    }
-    function customConfirm(message) {
-      return new Promise(resolve => showModal({ message, okText: 'OK', cancelText: 'Cancel', onOk: () => resolve(true), onCancel: () => resolve(false) }));
-    }
-    function customPrompt(message, defaultValue = '') {
-      return new Promise(resolve => showModal({ message, okText: 'OK', cancelText: 'Cancel', input: true, defaultValue, onOk: v => resolve(v), onCancel: () => resolve(null) }));
-    }
-
-    // Add a no-op for setOwnerSettingsUI to prevent errors if not defined
-    function setOwnerSettingsUI() {
-      // No-op: implement if you want to update owner settings UI
-    }
-
-    // Always call fetchUserQuota after login and after file operations
     function afterLogin() {
       showAuth(false);
       document.getElementById('user-info').innerText = 'Logged in as ' + (getUsername() || role) + ' (' + role + ')';
       refreshFiles();
       fetchUserQuota();
-      startQuotaPolling(); // <-- ensures quota is checked every 5 seconds
+      startQuotaPolling();
+      checkServerBan();
       if (role === 'owner') {
         document.getElementById('owner-switches').classList.remove('hidden');
         setOwnerSettingsUI();
@@ -1210,6 +1311,102 @@
     async function confirmOwner() {
       // Always return true for now (no-op)
       return true;
+    }
+
+    // Add a no-op for setOwnerSettingsUI to prevent errors if not defined
+    function setOwnerSettingsUI() {}
+
+    // Ban/unban user functions
+    window.banUserPrompt = async function(username) {
+      let duration = await customPrompt('Ban duration (e.g. 10m, 2h, 1d, 1mo, perm):', '1d');
+      if (!duration) return;
+      let reason = await customPrompt('Ban reason:', '');
+      if (reason === null) return;
+      let ms = 0;
+      if (duration === 'perm' || duration === 'permanent') ms = 100 * 365 * 24 * 3600 * 1000; // 100 years
+      else {
+        let m = duration.match(/^(\d+)([smhdw]|mo)$/i);
+        if (!m) { await customAlert('Invalid duration. Use s, m, h, d, w, mo, or perm.'); return; }
+        let n = parseInt(m[1]);
+        let unit = m[2].toLowerCase();
+        if (unit === 's') ms = n * 1000;
+        else if (unit === 'm') ms = n * 60 * 1000;
+        else if (unit === 'h') ms = n * 3600 * 1000;
+        else if (unit === 'd') ms = n * 24 * 3600 * 1000;
+        else if (unit === 'w') ms = n * 7 * 24 * 3600 * 1000;
+        else if (unit === 'mo') ms = n * 30 * 24 * 3600 * 1000;
+      }
+      let bannedUntil = Date.now() + ms;
+      showLoading(true);
+      await fetch(apiUrl('/api/admin/user-ban'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ username, bannedUntil, banReason: reason })
+      });
+      showLoading(false);
+      showUsersModal();
+    };
+
+    // Minimal showUserQuota (no-op)
+    function showUserQuota() {}
+
+    // Minimal customAlert (modal overlay)
+    function customAlert(message) {
+      if (/\bban(ned|s|ning)?\b/i.test(message)) {
+        // Show a non-dismissible overlay for ban messages
+        let overlay = document.createElement('div');
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.width = '100vw';
+        overlay.style.height = '100vh';
+        overlay.style.background = 'rgba(0,0,0,0.85)';
+        overlay.style.zIndex = '99999';
+        overlay.style.display = 'flex';
+        overlay.style.alignItems = 'center';
+        overlay.style.justifyContent = 'center';
+        overlay.innerHTML = `<div style=\"background:#fff;padding:2em 3em;border-radius:12px;box-shadow:0 2px 16px #0006;min-width:320px;text-align:center;\">
+          <h2 style='color:#d32f2f;'>You are banned</h2>
+          <p style='font-size:1.1em;'>${message}</p>
+        </div>`;
+        document.body.appendChild(overlay);
+        return;
+      }
+      // Normal alert with OK button
+      let overlay = document.createElement('div');
+      overlay.style.position = 'fixed';
+      overlay.style.top = '0';
+      overlay.style.left = '0';
+      overlay.style.width = '100vw';
+      overlay.style.height = '100vh';
+      overlay.style.background = 'rgba(0,0,0,0.85)';
+      overlay.style.zIndex = '99999';
+      overlay.style.display = 'flex';
+      overlay.style.alignItems = 'center';
+      overlay.style.justifyContent = 'center';
+      overlay.innerHTML = `<div style=\"background:#fff;padding:2em 3em;border-radius:12px;box-shadow:0 2px 16px #0006;min-width:320px;text-align:center;\">
+        <h2 style='color:#2d5be3;'>Notice</h2>
+        <p style='font-size:1.1em;'>${message}</p>
+        <button onclick=\"this.parentNode.parentNode.remove()\" style=\"margin-top:1.5em;padding:0.6em 2em;\">OK</button>
+      </div>`;
+      document.body.appendChild(overlay);
+    }
+
+    // Helper: Get user quota info from server (use new public endpoint)
+    function fetchUserQuota() {
+      const user = getUsername();
+      if (!user) {
+        showUserQuota(0, 0);
+        return;
+      }
+      fetch(apiUrl('/api/limit/' + encodeURIComponent(user)) + '?_=' + Date.now())
+        .then(resp => resp.json())
+        .then(data => {
+          let used = Number(data.usedGB) || 0;
+          let limit = Number(data.limitGB) || 0;
+          showUserQuota(used, limit);
+        })
+        .catch(() => showUserQuota(0, 0));
     }
   </script>
 </body>

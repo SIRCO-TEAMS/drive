@@ -387,7 +387,7 @@ app.post('/api/login', (req, res) => {
     if (hr > 0) timeStr += hr + 'h ';
     if (min > 0) timeStr += min + 'm ';
     if (sec > 0) timeStr += sec + 's';
-    return res.status(403).json({ error: `You are banned for ${timeStr.trim()}. Reason: ${user.banReason || 'No reason given.'}` });
+    return res.status(403).json({ error: `You are banned for ${timeStr.trim()}. Reason: ${user.banReason || 'No reason given.'}`, banned: true });
   }
   // Skip verified/approval checks for owner
   if (user.role !== 'owner') {
@@ -783,4 +783,42 @@ app.post('/api/admin/user-pause', auth('owner'), (req, res) => {
   users[username].paused = paused;
   saveUsers(users);
   res.json({ success: true });
+});
+
+// Endpoint: Get current user's ban status
+app.get('/api/user/ban-status', auth(), (req, res) => {
+  const users = loadUsers();
+  const user = users[req.user.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.bannedUntil && Date.now() < Number(user.bannedUntil)) {
+    const msLeft = Number(user.bannedUntil) - Date.now();
+    const sec = Math.floor(msLeft / 1000) % 60;
+    const min = Math.floor(msLeft / 60000) % 60;
+    const hr = Math.floor(msLeft / 3600000) % 24;
+    const day = Math.floor(msLeft / 86400000);
+    let timeStr = '';
+    if (day > 0) timeStr += day + 'd ';
+    if (hr > 0) timeStr += hr + 'h ';
+    if (min > 0) timeStr += min + 'm ';
+    if (sec > 0) timeStr += sec + 's';
+    return res.json({ banned: true, bannedUntil: user.bannedUntil, banReason: user.banReason || '', timeLeft: timeStr.trim() });
+  }
+  res.json({ banned: false });
+});
+
+// Public endpoint to check a user's ban status (no auth required)
+app.get('/api/ban/:username', (req, res) => {
+  const username = req.params.username;
+  if (!username) return res.status(400).json({ error: 'Username required' });
+  const users = loadUsers();
+  const user = users[username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.bannedUntil && Date.now() < Number(user.bannedUntil)) {
+    return res.json({ 
+      banned: true, 
+      bannedUntil: user.bannedUntil, 
+      banReason: user.banReason || '',
+    });
+  }
+  res.json({ banned: false });
 });
