@@ -497,7 +497,9 @@
     }
     function apiUrl(path) {
       if (staticMode) return backendUrl + path;
-      return path;
+      // Use HTTPS if protocol is https:
+      const protocol = window.location.protocol;
+      return (protocol === 'https:' ? 'https:' : 'http:') + '//' + window.location.host + path;
     }
     // Utility to get username from localStorage or cookies
     function getUsername() {

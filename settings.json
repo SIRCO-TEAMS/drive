@@ -11,5 +11,7 @@
   "jwtSecret": "supersecretkey",
   "maxUsers": 100,
   "defaultUserRole": "user",
-  "welcomeMessage": "Welcome to FTP Web Client!"
+  "welcomeMessage": "Welcome to FTP Web Client!",
+  "api_https": true,
+  "ftp_https": true
 }

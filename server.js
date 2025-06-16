@@ -620,12 +620,36 @@ function ensureOwner() {
 }
 
 // At the bottom, always use HTTP for Express web server
+// Initialize HTTPS/HTTP server based on settings
 function startServer() {
   const port = settings.port || 3000;
-  app.listen(port, () => {
-    console.log(`HTTP server running on http://localhost:${port}`);
-    console.log('Web server is running in HTTP mode only.');
-  });
+  const useHttps = settings.api_https !== false; // Default to true if not set
+  
+  // Load certificates if HTTPS is enabled
+  const keyPath = path.join(__dirname, 'certs', 'key.pem');
+  const certPath = path.join(__dirname, 'certs', 'cert.pem');
+  
+  if (useHttps && fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+    const httpsOptions = {
+      key: fs.readFileSync(keyPath),
+      cert: fs.readFileSync(certPath)
+    };
+    
+    // Create HTTPS server
+    const server = https.createServer(httpsOptions, app);
+    server.listen(port, () => {
+      console.log(`HTTPS server running on https://localhost:${port}`);
+      console.log('Web server is running in HTTPS mode with SSL/TLS encryption.');
+    });
+  } else {
+    if (useHttps) {
+      console.warn('SSL certificates not found or HTTPS disabled, falling back to HTTP');
+    }
+    app.listen(port, () => {
+      console.log(`HTTP server running on http://localhost:${port}`);
+      console.log('Web server is running in HTTP mode without encryption.');
+    });
+  }
 }
 
 // --- FTP SERVER INTEGRATION ---
@@ -644,15 +668,21 @@ const HTTPS_KEY = path.join(__dirname, 'certs', 'key.pem');
 const HTTPS_CERT = path.join(__dirname, 'certs', 'cert.pem');
 
 function startFtpServer() {
-  // TLS options for FTPS
+  // TLS options for FTPS if enabled in settings
   let tlsOptions = undefined;
-  const keyPath = path.join(__dirname, 'certs', 'key.pem');
-  const certPath = path.join(__dirname, 'certs', 'cert.pem');
-  if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
-    tlsOptions = {
-      key: fs.readFileSync(keyPath),
-      cert: fs.readFileSync(certPath)
-    };
+  const useFtps = settings.ftp_https !== false; // Default to true if not set
+  
+  if (useFtps) {
+    const keyPath = path.join(__dirname, 'certs', 'key.pem');
+    const certPath = path.join(__dirname, 'certs', 'cert.pem');
+    if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+      tlsOptions = {
+        key: fs.readFileSync(keyPath),
+        cert: fs.readFileSync(certPath)
+      };
+    } else {
+      console.warn('SSL certificates not found, FTP server will run without TLS/SSL');
+    }
   }
 
   const ftpServer = new FtpSrv({
