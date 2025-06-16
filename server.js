@@ -689,7 +689,10 @@ function startFtpServer() {
     url: FTP_URL,
     anonymous: false,
     greeting: [settings.welcomeMessage || 'Welcome to the FTP Web Client server!'],
-    tls: tlsOptions // Enable FTPS if certs exist
+    tls: tlsOptions, // Enable FTPS if certs exist
+    pasv_url: settings.pasv_url || 'localhost',
+    pasv_min: settings.pasv_min || 30000,
+    pasv_max: settings.pasv_max || 31000
   });
 
   ftpServer.on('login', async ({ username, password }, resolve, reject) => {

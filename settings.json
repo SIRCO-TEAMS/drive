@@ -3,8 +3,8 @@
   "allowLogin": true,
   "allowUpload": true,
   "uploadLimit": "650GB",
-  "port": 3000,
-  "ftpPort": 2121,
+  "port": 80,
+  "ftpPort": 21,
   "ownerUsername": "owner",
   "ownerPassword": "ownerpassword",
   "storageDir": "storage",
@@ -13,5 +13,8 @@
   "defaultUserRole": "user",
   "welcomeMessage": "Welcome to FTP Web Client!",
   "api_https": true,
-  "ftp_https": true
+  "ftp_https": true,
+  "pasv_url": "localhost",
+  "pasv_min": 30000,
+  "pasv_max": 31000
 }
