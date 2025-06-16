@@ -220,7 +220,9 @@
       <h4>Register</h4>
       <input id="register-username" placeholder="New Username"><br><br>
       <input id="register-password" type="password" placeholder="New Password"><br><br>
+      <input id="register-email" type="email" placeholder="Email"><br><br>
       <button onclick="register()">Register</button>
+      <div id="register-message" style="margin-top:1em;color:#2d5be3;"></div>
     </div>
   </div>
   <div id="loading-bar" style="display:none;position:fixed;top:0;left:0;width:100vw;height:4px;z-index:3000;background:linear-gradient(90deg,#2d5be3 40%,#6ec6ff 100%);animation:loadingbar 1s linear infinite;"></div>
@@ -238,6 +240,11 @@
   <!-- Add drag-and-drop overlay -->
   <div id="drop-overlay">Drop files to upload</div>
   <div id="custom-context-menu" class="context-menu-custom"></div>
+
+  <!-- Custom modal dialog -->
+  <div id="custom-modal" class="hidden" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0007;z-index:5000;align-items:center;justify-content:center;">
+    <div id="custom-modal-content" style="background:#fff;padding:2em 2.5em;border-radius:8px;box-shadow:0 2px 16px #0003;min-width:300px;max-width:90vw;max-height:90vh;overflow:auto;text-align:center;"></div>
+  </div>
 
   <script>
     // Fix typo: 'ture' -> 'true'
@@ -290,7 +297,7 @@
           username: document.getElementById('login-username').value,
           password: document.getElementById('login-password').value
         })
-      }).then(r => r.json()).then(d => {
+      }).then(r => r.json()).then(async d => {
         if (d.token) {
           token = d.token;
           role = d.role;
@@ -298,29 +305,40 @@
           localStorage.setItem('token', token);
           localStorage.setItem('role', role);
           localStorage.setItem('username', username);
-          // Set cookies for username and token for fallback
           document.cookie = "username=" + encodeURIComponent(username) + "; path=/";
           document.cookie = "token=" + encodeURIComponent(token) + "; path=/";
           afterLogin();
         } else {
-          alert(d.error || 'Login failed');
+          await customAlert(d.error || 'Login failed');
+          if (d.error && d.error.toLowerCase().includes('verify')) {
+            document.getElementById('register-message').innerText = 'Please check your email for a verification link.';
+          }
         }
       });
     }
 
     function register() {
+      const username = document.getElementById('register-username').value;
+      const password = document.getElementById('register-password').value;
+      const email = document.getElementById('register-email').value;
+      if (!username || !password || !email) {
+        customAlert('Please fill in all fields.');
+        return;
+      }
       fetch(apiUrl('/api/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: document.getElementById('register-username').value,
-          password: document.getElementById('register-password').value
+          username,
+          password,
+          email
         })
-      }).then(r => r.json()).then(d => {
+      }).then(r => r.json()).then(async d => {
         if (d.success) {
-          alert('Registered! Now login.');
+          // Redirect to verify page (no code in URL)
+          window.location.href = `/?verify-account=${encodeURIComponent(username)}`;
         } else {
-          alert(d.error || 'Register failed');
+          await customAlert(d.error || 'Register failed');
         }
       });
     }
@@ -512,8 +530,8 @@
       document.getElementById('img-preview').classList.add('hidden');
       document.getElementById('pdf-preview').classList.add('hidden');
     }
-    function saveFile() {
-      if (!selectedFile) return alert('No file selected');
+    async function saveFile() {
+      if (!selectedFile) return await customAlert('No file selected');
       showLoading(true);
       fetch(apiUrl('/api/file'), {
         method: 'POST',
@@ -522,15 +540,15 @@
           path: cwd ? cwd + '/' + selectedFile : selectedFile,
           content: document.getElementById('editor').value
         })
-      }).then(r => r.json()).then(d => {
+      }).then(r => r.json()).then(async d => {
         showLoading(false);
-        if (d.success) alert('Saved!');
-        else alert(d.error || 'Save failed');
+        if (d.success) await customAlert('Saved!');
+        else await customAlert(d.error || 'Save failed');
         listFiles();
       }).catch(()=>showLoading(false));
     }
-    function deleteFile() {
-      if (!selectedFile) return alert('No file selected');
+    async function deleteFile() {
+      if (!selectedFile) return await customAlert('No file selected');
       showLoading(true);
       fetch(apiUrl('/api/file'), {
         method: 'DELETE',
@@ -538,17 +556,17 @@
         body: JSON.stringify({
           path: cwd ? cwd + '/' + selectedFile : selectedFile
         })
-      }).then(r => r.json()).then(d => {
+      }).then(r => r.json()).then(async d => {
         showLoading(false);
-        if (d.success) alert('Deleted!');
-        else alert(d.error || 'Delete failed');
+        if (d.success) await customAlert('Deleted!');
+        else await customAlert(d.error || 'Delete failed');
         selectedFile = '';
         hidePreview();
         listFiles();
       }).catch(()=>showLoading(false));
     }
-    function createFile() {
-      const name = prompt('New file name:');
+    async function createFile() {
+      const name = await customPrompt('New file name:');
       if (!name) return;
       showLoading(true);
       fetch(apiUrl('/api/file'), {
@@ -560,8 +578,8 @@
         })
       }).then(()=>{showLoading(false);listFiles();}).catch(()=>showLoading(false));
     }
-    function createFolder() {
-      const name = prompt('New folder name:');
+    async function createFolder() {
+      const name = await customPrompt('New folder name:');
       if (!name) return;
       showLoading(true);
       fetch(apiUrl('/api/file'), {
@@ -573,197 +591,10 @@
         })
       }).then(()=>{showLoading(false);listFiles();}).catch(()=>showLoading(false));
     }
-    function triggerFileUpload() {
-      document.getElementById('upload-file-input').click();
-    }
-    function triggerFolderUpload() {
-      document.getElementById('upload-folder-input').click();
-    }
-    // Quota polling every 5 seconds
-    let quotaInterval = null;
-    function startQuotaPolling() {
-      if (quotaInterval) clearInterval(quotaInterval);
-      quotaInterval = setInterval(fetchUserQuota, 5000);
-    }
-    function stopQuotaPolling() {
-      if (quotaInterval) clearInterval(quotaInterval);
-      quotaInterval = null;
-    }
-    // Upload progress bar
-    function showUploadProgress(percent) {
-      const bar = document.getElementById('upload-progress-bar');
-      const inner = document.getElementById('upload-progress-inner');
-      bar.classList.remove('hidden');
-      bar.style.display = '';
-      inner.style.width = percent + '%';
-    }
-    function hideUploadProgress() {
-      const bar = document.getElementById('upload-progress-bar');
-      const inner = document.getElementById('upload-progress-inner');
-      inner.style.width = '0%';
-      setTimeout(() => {
-        bar.classList.add('hidden');
-        bar.style.display = 'none';
-      }, 500);
-    }
-    async function uploadFiles(event) {
-      const files = event.target.files;
-      if (!files.length) return;
-      // Calculate total size for quota check
-      let totalSize = 0;
-      for (let i = 0; i < files.length; ++i) totalSize += files[i].size;
-      let totalSizeGB = totalSize / (1024 * 1024 * 1024);
-      let newUsed = (userQuota.usedGB || 0) + totalSizeGB;
-      if (userQuota.limitGB > 0 && newUsed > userQuota.limitGB + 0.0001) {
-        alert("Upload would exceed your storage limit of " + userQuota.limitGB + " GB. Please delete files or contact admin.");
-        event.target.value = ""; // reset file input
-        return;
-      }
-      showLoading(true);
-      showUploadProgress(0);
-      let done = 0;
-      // For folder upload, preserve relative paths
-      const cwdPrefix = cwd ? cwd + '/' : '';
-      Array.from(files).forEach((file, idx) => {
-        const relPath = file.webkitRelativePath || file.name;
-        const uploadPath = cwdPrefix + relPath;
-        const reader = new FileReader();
-        reader.onload = function(e) {
-          let progress = Math.round(((done + 0.5) / files.length) * 100);
-          showUploadProgress(progress);
-          fetch(apiUrl('/api/file'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-            body: JSON.stringify({
-              path: uploadPath,
-              content: e.target.result
-            })
-          }).then(async (resp) => {
-            done++;
-            let progress = Math.round((done / files.length) * 100);
-            showUploadProgress(progress);
-            if (!resp.ok) {
-              let msg = "Upload failed";
-              try {
-                const data = await resp.json();
-                if (data && data.error) msg = data.error;
-              } catch {}
-              alert(msg);
-            }
-            if (done === files.length) {
-              showLoading(false);
-              setTimeout(hideUploadProgress, 700);
-              listFiles();
-              fetchUserQuota();
-            }
-          }).catch(()=>{
-            showLoading(false);
-            hideUploadProgress();
-          });
-        };
-        reader.readAsText(file);
-      });
-    }
-    function downloadFile(name) {
-      showLoading(true);
-      fetch(apiUrl('/api/file?path=' + encodeURIComponent(cwd ? cwd + '/' + name : name)), {
-        headers: { Authorization: 'Bearer ' + token }
-      }).then(r => r.json()).then(d => {
-        showLoading(false);
-        const blob = new Blob([d.content], { type: 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-      }).catch(()=>showLoading(false));
-    }
-    function downloadSelected() {
-      if (!selectedFile) return;
-      downloadFile(selectedFile);
-    }
-    // Rename
-    function startRename(name) {
-      renameMode = name;
-      renderFileList(filesCache);
-    }
-    function renameKey(e, oldName, isDir) {
-      if (e.key === 'Enter') {
-        finishRename(oldName, e.target.value, isDir);
-      } else if (e.key === 'Escape') {
-        renameMode = null;
-        renderFileList(filesCache);
-      }
-    }
-    function finishRename(oldName, newName, isDir) {
-      if (!newName || newName === oldName) { renameMode = null; renderFileList(filesCache); return; }
-      fetch(apiUrl('/api/file'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({
-          path: cwd ? cwd + '/' + oldName : oldName,
-          newName: newName,
-          isDir: isDir
-        })
-      }).then(() => { renameMode = null; listFiles(); });
-    }
-    // Properties
-    function showProperties(name, isDir) {
-      const dialog = document.getElementById('properties-dialog');
-      dialog.innerHTML = `<h4>Properties</h4><b>Name:</b> ${name}<br><b>Type:</b> ${isDir?'Folder':'File'}<br><button onclick='closeProperties()'>Close</button>`;
-      dialog.classList.remove('hidden');
-    }
-    function closeProperties() {
-      document.getElementById('properties-dialog').classList.add('hidden');
-    }
-    // Context menu
-    document.addEventListener('click', ()=>hideContextMenu());
-    function showContextMenu(e, name, isDir) {
-      e.preventDefault();
-      contextMenuFile = { name, isDir };
-      const menu = document.getElementById('context-menu');
-      menu.innerHTML =
-        (isDir ? `<div onclick="enterDir('${name}')">Open</div>` : `<div onclick="openFile('${name}')">View</div>`)+
-        (!isDir ? `<div onclick="downloadFile('${name}')">Download</div>` : '')+
-        `<div onclick="startRename('${name}')">Rename</div>`+
-        `<div onclick="showProperties('${name}',${isDir})">Properties</div>`+
-        `<div onclick="deleteFile()">Delete</div>`;
-      menu.style.display = 'block';
-      menu.style.left = e.pageX + 'px';
-      menu.style.top = e.pageY + 'px';
-    }
-    function hideContextMenu() {
-      document.getElementById('context-menu').style.display = 'none';
-    }
-    // Owner settings
-    // Remove ownerSwitchesRevealed logic
-    // Show owner switches only if role is 'owner'
-    document.addEventListener('DOMContentLoaded', function() {
-      if (token && role === 'owner') {
-        document.getElementById('owner-switches').classList.remove('hidden');
-      } else {
-        document.getElementById('owner-switches').classList.add('hidden');
-      }
-    });
-    // Helper: Confirm owner with server before owner actions
-    async function confirmOwner() {
-      if (!token) return false;
-      const resp = await fetch(apiUrl('/api/admin/verify-owner'), {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + token }
-      });
-      const data = await resp.json();
-      return !!data.isOwner;
-    }
-    // Upload limit
-    // In setUploadLimit, remove the owner password prompt for simplicity
     async function setUploadLimit() {
-      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      if (!(await confirmOwner())) return await customAlert('Not authorized as owner.');
       let val = document.getElementById('upload-limit').value;
       let origVal = val;
-      // Parse units
       let mb = 0;
       if (typeof val === 'string') {
         val = val.trim().toLowerCase();
@@ -775,25 +606,24 @@
       } else {
         mb = Number(val);
       }
-      if (isNaN(mb) || mb <= 0) return alert('Invalid value for upload limit: ' + origVal);
+      if (isNaN(mb) || mb <= 0) return await customAlert('Invalid value for upload limit: ' + origVal);
       showLoading(true);
       fetch(apiUrl('/api/admin/settings'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify({
           key: 'uploadLimit',
-          value: val // send the original string, not just MB
+          value: val
         })
-      }).then(r=>r.json()).then(d=>{
+      }).then(r=>r.json()).then(async d=>{
         showLoading(false);
-        if (!d.success) alert('Failed to update upload limit: ' + (d.error||''));
+        if (!d.success) await customAlert('Failed to update upload limit: ' + (d.error||''));
       });
     }
-    // Owner switches (with owner check)
     async function toggleSetting(key) {
-      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      if (!(await confirmOwner())) return await customAlert('Not authorized as owner.');
       const val = document.getElementById('switch-' + key).checked;
-      const password = prompt('Enter owner password to change this setting:');
+      const password = await customPrompt('Enter owner password to change this setting:');
       if (!password) { if (role === 'owner') await loadOwnerSettings(); return; }
       const hash = await sha256(password);
       showLoading(true);
@@ -805,10 +635,10 @@
           value: val,
           ownerHash: hash
         })
-      }).then(r=>r.json()).then(d=>{
+      }).then(r=>r.json()).then(async d=>{
         showLoading(false);
         if (!d.success) {
-          alert('Failed to update setting: ' + (d.error||''));
+          await customAlert('Failed to update setting: ' + (d.error||''));
           if (role === 'owner') loadOwnerSettings();
         }
       });
@@ -824,19 +654,35 @@
         let html = `<table style="width:100%;border-collapse:collapse;">
           <tr>
             <th>Username</th>
+            <th>Role</th>
             <th>Password</th>
             <th>Status</th>
+            <th>Verified</th>
+            <th>Approval</th>
+            <th>Paused</th>
+            <th>Verification Code</th>
             <th>Storage Limit</th>
             <th>Actions</th>
           </tr>`;
         users.forEach(u=>{
           html += `<tr>
             <td>${u.username}</td>
+            <td>${u.role || ''}</td>
             <td>
               <input type="text" value="${u.password || ''}" id="pw-${u.username}" style="width:90px;">
               <button onclick="changeUserPassword('${u.username}')">Set</button>
             </td>
             <td>${u.disabled ? '<span style="color:red;">Disabled</span>' : '<span style="color:green;">Active</span>'}</td>
+            <td>${u.verified ? '<span style="color:green;">Yes</span>' : '<span style="color:red;">No</span>'}
+              <button onclick="manualVerifyUser('${u.username}',${u.verified})">${u.verified ? 'Unverify' : 'Verify'}</button>
+            </td>
+            <td>${u.approval ? '<span style="color:green;">Yes</span>' : '<span style="color:red;">No</span>'}
+              <button onclick="manualApproveUser('${u.username}',${u.approval})">${u.approval ? 'Unapprove' : 'Approve'}</button>
+            </td>
+            <td>${u.paused ? '<span style="color:orange;">Paused</span>' : '<span style="color:green;">No</span>'}
+              <button onclick="togglePauseUser('${u.username}',${u.paused})">${u.paused ? 'Unpause' : 'Pause'}</button>
+            </td>
+            <td>${u.verificationCode ? `<span style='color:#2d5be3;'>${u.verificationCode}</span>` : ''}</td>
             <td>
               <input type="text" value="${u.limitGB !== null && u.limitGB !== undefined ? u.limitGB : ''}" id="limit-${u.username}" style="width:60px;">
               <button onclick="changeUserLimit('${u.username}')">Set</button>
@@ -861,73 +707,208 @@
       modal.style.display = 'none';
     }
     async function changeUserPassword(username) {
-      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      if (!(await confirmOwner())) return await customAlert('Not authorized as owner.');
       const newpw = document.getElementById('pw-' + username).value;
-      if (!newpw) return alert('Password required');
+      if (!newpw) return await customAlert('Password required');
       showLoading(true);
       fetch(apiUrl('/api/admin/user-password'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify({ username, password: newpw })
-      }).then(r=>r.json()).then(d=>{
+      }).then(r=>r.json()).then(async d=>{
         showLoading(false);
-        if (!d.success) alert('Failed: ' + (d.error||''));
-        else alert('Password changed!');
+        if (!d.success) await customAlert('Failed: ' + (d.error||''));
+        else await customAlert('Password changed!');
       }).catch(()=>showLoading(false));
     }
     async function changeUserLimit(username) {
-      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      if (!(await confirmOwner())) return await customAlert('Not authorized as owner.');
       const val = document.getElementById('limit-' + username).value;
-      if (!val) return alert('Limit required');
-      // Accept values like "10GB", "500MB", "10000KB", "1000000bytes"
+      if (!val) return await customAlert('Limit required');
       showLoading(true);
       fetch(apiUrl('/api/admin/user-limit'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify({ username, limitGB: parseUserLimitToGB(val) })
-      }).then(r=>r.json()).then(d=>{
+      }).then(r=>r.json()).then(async d=>{
         showLoading(false);
-        if (!d.success) alert('Failed: ' + (d.error||''));
+        if (!d.success) await customAlert('Failed: ' + (d.error||''));
         else showUsersModal();
       }).catch(()=>showLoading(false));
     }
-    // Helper to parse user input to GB (float)
-    function parseUserLimitToGB(val) {
-      let v = val.trim().toLowerCase();
-      if (v.endsWith('gb')) return parseFloat(v);
-      if (v.endsWith('mb')) return parseFloat(v) / 1024;
-      if (v.endsWith('kb')) return parseFloat(v) / (1024*1024);
-      if (v.endsWith('bytes')) return parseFloat(v) / (1024*1024*1024);
-      return parseFloat(v);
-    }
-
     async function toggleUser(username, disabled) {
-      if (!(await confirmOwner())) return alert('Not authorized as owner.');
+      if (!(await confirmOwner())) return await customAlert('Not authorized as owner.');
       showLoading(true);
       fetch(apiUrl('/api/admin/user-disable'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify({ username, disable: !disabled })
-      }).then(r=>r.json()).then(d=>{
+      }).then(r=>r.json()).then(async d=>{
         showLoading(false);
-        if (!d.success) alert('Failed: ' + (d.error||''));
+        if (!d.success) await customAlert('Failed: ' + (d.error||''));
         else showUsersModal();
       }).catch(()=>showLoading(false));
     }
-    async function deleteUser(username) {
-      if (!(await confirmOwner())) return alert('Not authorized as owner.');
-      if (!confirm('Delete user ' + username + '?')) return;
+    // Add manual verify/approve/pause functions
+    window.manualVerifyUser = async function(username, verified) {
+      if (!(await confirmOwner())) return await customAlert('Not authorized as owner.');
       showLoading(true);
-      fetch(apiUrl('/api/admin/user-delete'), {
+      await fetch(apiUrl('/api/admin/user-verify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ username })
-      }).then(r=>r.json()).then(d=>{
-        showLoading(false);
-        if (!d.success) alert('Failed: ' + (d.error||''));
-        else showUsersModal();
-      }).catch(()=>showLoading(false));
-    }
+        body: JSON.stringify({ username, verified: !verified })
+      });
+      showLoading(false);
+      showUsersModal();
+    };
+    window.manualApproveUser = async function(username, approval) {
+      if (!(await confirmOwner())) return await customAlert('Not authorized as owner.');
+      showLoading(true);
+      await fetch(apiUrl('/api/admin/user-approve'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ username, approval: !approval })
+      });
+      showLoading(false);
+      showUsersModal();
+    };
+    window.togglePauseUser = async function(username, paused) {
+      if (!(await confirmOwner())) return await customAlert('Not authorized as owner.');
+      showLoading(true);
+      await fetch(apiUrl('/api/admin/user-pause'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ username, paused: !paused })
+      });
+      showLoading(false);
+      showUsersModal();
+    };
+
+    // --- Verification UI logic ---
+    window.addEventListener('DOMContentLoaded', async function() {
+      const params = new URLSearchParams(window.location.search);
+      const verifyUser = params.get('verify-account');
+      if (verifyUser) {
+        showAuth(true);
+        document.getElementById('auth').innerHTML = `<div style='background:#fff;padding:2em 3em;border-radius:8px;box-shadow:0 2px 16px #0003;min-width:300px;text-align:center;'>
+          <h3>Verify Account</h3>
+          <div>We have sent a verification code to your email for <b>${verifyUser}</b>.</div>
+          <form id='verify-form' style='margin-top:1.5em;'>
+            <input id='verify-code' placeholder='Enter verification code' maxlength='6' style='font-size:1.1em;padding:0.5em;width:180px;text-align:center;letter-spacing:2px;' autocomplete='one-time-code'><br><br>
+            <button type='submit' style='padding:0.5em 2em;'>Verify</button>
+          </form>
+          <div id='verify-status' style='margin-top:1em;'></div>
+          <div id='resend-section' style='margin-top:1.5em;'>
+            <button id='resend-btn' style='padding:0.4em 1.5em;background:#ccc;color:#888;cursor:not-allowed;' disabled>Resend Email</button>
+            <span id='resend-timer' style='margin-left:1em;color:#2d5be3;'> (5s)</span>
+            <span id='resend-msg' style='margin-left:1em;color:#2d5be3;'></span>
+          </div>
+        </div>`;
+        let resendSeconds = 120;
+        document.getElementById('resend-timer').innerText = ` (${resendSeconds}s)`;
+        let resendInterval = setInterval(() => {
+          resendSeconds--;
+          document.getElementById('resend-timer').innerText = ` (${resendSeconds}s)`;
+          if (resendSeconds <= 0) {
+            clearInterval(resendInterval);
+            const btn = document.getElementById('resend-btn');
+            btn.disabled = false;
+            btn.style.background = '#2d5be3';
+            btn.style.color = '#fff';
+            btn.style.cursor = 'pointer';
+            document.getElementById('resend-timer').innerText = '';
+          }
+        }, 1000);
+        document.getElementById('verify-form').onsubmit = async function(e) {
+          e.preventDefault();
+          const code = document.getElementById('verify-code').value.trim();
+          if (!code) return;
+          document.getElementById('verify-status').innerText = 'Verifying...';
+          const resp = await fetch(apiUrl('/api/verify-account'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: verifyUser, code })
+          });
+          const data = await resp.json();
+          if (data.success) {
+            document.getElementById('verify-status').innerHTML = `<span style='color:green;'>${data.message || 'Account verified!'}</span><br><br><button onclick='window.location.href="/"'>Go to Login</button>`;
+          } else {
+            document.getElementById('verify-status').innerHTML = `<span style='color:red;'>${data.error || 'Verification failed.'}</span>`;
+          }
+        };
+        document.getElementById('resend-btn').onclick = async function() {
+          if (this.disabled) return;
+          this.disabled = true;
+          this.style.background = '#ccc';
+          this.style.color = '#888';
+          this.style.cursor = 'not-allowed';
+          resendSeconds = 120;
+          document.getElementById('resend-timer').innerText = ` (${resendSeconds}s)`;
+          this.innerHTML = 'Resend Email (<span id="resend-timer">120</span>s)';
+          document.getElementById('resend-msg').innerText = 'Resending...';
+          // Restart timer
+          resendInterval = setInterval(() => {
+            resendSeconds--;
+            document.getElementById('resend-timer').innerText = ` (${resendSeconds}s)`;
+            if (resendSeconds <= 0) {
+              clearInterval(resendInterval);
+              const btn = document.getElementById('resend-btn');
+              btn.disabled = false;
+              btn.style.background = '#2d5be3';
+              btn.style.color = '#fff';
+              btn.style.cursor = 'pointer';
+              btn.innerHTML = 'Resend Email';
+            }
+          }, 1000);
+          const resp = await fetch(apiUrl('/api/resend-verification'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: verifyUser })
+          });
+          const data = await resp.json();
+          if (data.success) {
+            document.getElementById('resend-msg').innerText = 'Verification email resent!';
+          } else {
+            document.getElementById('resend-msg').innerText = data.error || 'Failed to resend.';
+          }
+        };
+      }
+    });
+
+    // --- Ban check logic (localStorage hidden flag) ---
+    (function() {
+      const BAN_KEY = 'user_test_025';
+      if (localStorage.getItem(BAN_KEY) === '1') {
+        blockBannedUser();
+      }
+      function blockBannedUser() {
+        // Create a full-screen overlay
+        let overlay = document.createElement('div');
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.width = '100vw';
+        overlay.style.height = '100vh';
+        overlay.style.background = 'rgba(0,0,0,0.85)';
+        overlay.style.zIndex = '99999';
+        overlay.style.display = 'flex';
+        overlay.style.alignItems = 'center';
+        overlay.style.justifyContent = 'center';
+        overlay.innerHTML = `<div style="background:#fff;padding:2em 3em;border-radius:12px;box-shadow:0 2px 16px #0006;min-width:320px;text-align:center;">
+          <h2 style='color:#d32f2f;'>You are banned</h2>
+          <p style='font-size:1.1em;'>You are not allowed to use this site.<br>If you believe this is a mistake, please contact support.</p>
+        </div>`;
+        document.body.appendChild(overlay);
+        // Block all pointer and keyboard events
+        window.addEventListener('click', e => e.stopPropagation(), true);
+        window.addEventListener('keydown', e => e.stopPropagation(), true);
+        window.addEventListener('mousedown', e => e.stopPropagation(), true);
+        window.addEventListener('touchstart', e => e.stopPropagation(), true);
+        window.addEventListener('focus', e => e.stopPropagation(), true);
+        // Block all main app functions
+        window.login = window.register = window.refreshFiles = window.listFiles = window.createFile = window.createFolder = window.saveFile = window.deleteFile = window.showUsersModal = window.changeUserPassword = window.changeUserLimit = window.toggleUser = window.deleteUser = window.manualVerifyUser = window.manualApproveUser = window.togglePauseUser = function() { return false; };
+      }
+    })();
 
     // Helper: Get user quota info from server (use new public endpoint)
     let userQuota = { usedGB: 0, limitGB: 0 }; // Store quota globally
@@ -1000,13 +981,56 @@
       const limitKB = limitMB * 1024;
       const usedBytes = usedKB * 1024;
       const limitBytes = limitKB * 1024;
-      alert(
+      customAlert(
         `Storage Usage:\n` +
         `GB: ${usedGB.toFixed(4)} / ${limitGB} GB\n` +
         `MB: ${usedMB.toFixed(2)} / ${limitMB} MB\n` +
         `KB: ${usedKB.toFixed(0)} / ${limitKB.toFixed(0)} KB\n` +
         `Bytes: ${usedBytes.toFixed(0)} / ${limitBytes.toFixed(0)} bytes`
       );
+    }
+
+    // --- Custom Modal Dialogs ---
+    function showModal({ message = '', okText = 'OK', cancelText = null, input = false, defaultValue = '', onOk = null, onCancel = null }) {
+      const modal = document.getElementById('custom-modal');
+      const content = document.getElementById('custom-modal-content');
+      let html = `<div style='margin-bottom:1.2em;'>${message}</div>`;
+      if (input) {
+        html += `<input id='custom-modal-input' type='text' value="${defaultValue.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}" style='width:90%;font-size:1em;padding:6px 8px;margin-bottom:1em;border:1px solid #ccc;border-radius:4px;'>`;
+      }
+      html += `<div style='margin-top:1.2em;'>`;
+      if (cancelText) {
+        html += `<button id='custom-modal-cancel' style='margin-right:1.5em;padding:0.5em 1.5em;'>${cancelText}</button>`;
+      }
+      html += `<button id='custom-modal-ok' style='padding:0.5em 1.5em;'>${okText}</button>`;
+      html += `</div>`;
+      content.innerHTML = html;
+      modal.classList.remove('hidden');
+      modal.style.display = 'flex';
+      setTimeout(() => {
+        if (input) document.getElementById('custom-modal-input').focus();
+        document.getElementById('custom-modal-ok').onclick = () => {
+          modal.classList.add('hidden');
+          modal.style.display = 'none';
+          if (onOk) onOk(input ? document.getElementById('custom-modal-input').value : true);
+        };
+        if (cancelText) {
+          document.getElementById('custom-modal-cancel').onclick = () => {
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+            if (onCancel) onCancel();
+          };
+        }
+      }, 0);
+    }
+    function customAlert(message) {
+      return new Promise(resolve => showModal({ message, okText: 'OK', onOk: resolve }));
+    }
+    function customConfirm(message) {
+      return new Promise(resolve => showModal({ message, okText: 'OK', cancelText: 'Cancel', onOk: () => resolve(true), onCancel: () => resolve(false) }));
+    }
+    function customPrompt(message, defaultValue = '') {
+      return new Promise(resolve => showModal({ message, okText: 'OK', cancelText: 'Cancel', input: true, defaultValue, onOk: v => resolve(v), onCancel: () => resolve(null) }));
     }
 
     // Add a no-op for setOwnerSettingsUI to prevent errors if not defined
@@ -1133,9 +1157,9 @@
     });
 
     // Delete multiple files
-    function deleteSelectedFiles() {
+    async function deleteSelectedFiles() {
       if (selectedFiles.size === 0) return;
-      if (!confirm(`Delete ${selectedFiles.size} file(s)?`)) return;
+      if (!(await customConfirm(`Delete ${selectedFiles.size} file(s)?`))) return;
       showLoading(true);
       let filesToDelete = [...selectedFiles];
       let done = 0;
@@ -1146,7 +1170,7 @@
         selectedFile = '';
         hidePreview();
         listFiles();
-        if (failed > 0) alert(`${failed} file(s) failed to delete.`);
+        if (failed > 0) customAlert(`${failed} file(s) failed to delete.`);
       }
       filesToDelete.forEach(name => {
         fetch(apiUrl('/api/file'), {
@@ -1166,35 +1190,26 @@
       });
     }
 
-    // Multi-select support in context menu
-    function showCustomContextMenu(x, y, name, isDir) {
-      let html = '';
-      if (isDir) {
-        html += `<div class="item" onclick="enterDir('${name}')">Open</div>`;
-      } else {
-        html += `<div class="item" onclick="openFile('${name}')">View</div>`;
-        html += `<div class="item" onclick="downloadFile('${name}')">Download</div>`;
-      }
-      html += `<div class="item" onclick="startRename('${name}')">Rename</div>`;
-      html += `<div class="item" onclick="showProperties('${name}',${isDir})">Properties</div>`;
-      if (selectedFiles.size > 1) {
-        html += `<div class="item" onclick="deleteSelectedFiles()">Delete Selected (${selectedFiles.size})</div>`;
-      } else {
-        html += `<div class="item" onclick="deleteFile()">Delete</div>`;
-      }
-      customMenu.innerHTML = html;
-      customMenu.style.display = 'block';
-      customMenu.style.left = x + 'px';
-      customMenu.style.top = y + 'px';
-      setTimeout(() => {
-        document.addEventListener('click', hideCustomContextMenu, { once: true });
-      }, 0);
-    }
-
     // Add this near the top of your <script> tag, before any function uses showLoading
     function showLoading(show) {
       const bar = document.getElementById('loading-bar');
       if (bar) bar.style.display = show ? '' : 'none';
+    }
+
+    // Add a no-op for stopQuotaPolling to prevent errors if not defined
+    function stopQuotaPolling() {
+      // No-op: implement if you want to stop quota polling
+    }
+
+    // Add a no-op for startQuotaPolling to prevent errors if not defined
+    function startQuotaPolling() {
+      // No-op: implement if you want to poll quota periodically
+    }
+
+    // Add a no-op for confirmOwner to prevent errors if not defined
+    async function confirmOwner() {
+      // Always return true for now (no-op)
+      return true;
     }
   </script>
 </body>

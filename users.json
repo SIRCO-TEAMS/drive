@@ -4,5 +4,16 @@
     "role": "owner",
     "limitGB": 20,
     "plain": "ownerpass"
+  },
+  "co": {
+    "password": "$2a$10$LamBkCM1KcEImmHneMQ9FO1Fe4sw56RaiYoql0.5uOLSUwqka6MoG",
+    "plain": "12",
+    "role": "user",
+    "enabled": true,
+    "limitGB": 5,
+    "email": "timco307@gmail.com",
+    "verified": true,
+    "approval": true,
+    "paused": false
   }
 }

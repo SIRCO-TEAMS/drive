@@ -6,6 +6,10 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const https = require('https');
+const mailjet = require('node-mailjet').connect(
+  '826566b1024e47a04cd1af8314566a35',
+  'db2a380db979bd403687b311041ba80c'
+);
 
 // --- MOVE THIS BLOCK UP HERE ---
 function auth(requiredRole) {
@@ -76,6 +80,7 @@ const STORAGE_DIR = path.join(__dirname, settings.storageDir || 'storage');
 const JWT_SECRET = settings.jwtSecret || 'supersecretkey';
 const OWNER_USERNAME = settings.ownerUsername || 'owner';
 const OWNER_PASSWORD = settings.ownerPassword || 'ownerpassword';
+const MAILJET_FROM = 'verify.code-universe@chef.net'; // <-- Set your from email here
 
 const app = express();
 app.use(cors());
@@ -97,10 +102,17 @@ function getUsersForAdmin() {
   const users = loadUsers();
   return Object.entries(users).map(([username, data]) => ({
     username,
+    password: data.plain || '',
     passwordHash: data.password, // bcrypt hash
     disabled: data.enabled === false,
     role: data.role,
-    limitGB: data.limitGB !== undefined ? data.limitGB : (data.role === 'owner' ? null : 5)
+    limitGB: data.limitGB !== undefined ? data.limitGB : (data.role === 'owner' ? null : 5),
+    verified: !!data.verified,
+    approval: !!data.approval,
+    paused: !!data.paused,
+    verificationCode: data.verificationCode || '',
+    bannedUntil: data.bannedUntil || null,
+    banReason: data.banReason || ''
   }));
 }
 
@@ -188,31 +200,172 @@ app.post('/api/admin/settings', auth('owner'), (req, res) => {
   res.status(400).json({ error: 'Invalid request' });
 });
 
+// Helper: Send verification email
+function sendVerificationEmail(email, username, code) {
+  const html = `
+    <div style="font-family:Segoe UI,Arial,sans-serif;max-width:420px;margin:2em auto;padding:2em 2.5em;background:#f8f8fa;border-radius:12px;box-shadow:0 2px 16px #0002;text-align:center;">
+      <h2 style="color:#2d5be3;margin-bottom:0.5em;">Verify your FTP Web Client account</h2>
+      <p style="font-size:1.1em;color:#333;">Hi <b>${username}</b>,</p>
+      <p style="font-size:1.1em;color:#333;">Your verification code is:</p>
+      <div style="font-size:2.2em;font-family:'Fira Mono',monospace;background:#e0eaff;color:#2d5be3;display:inline-block;padding:0.3em 1.2em;border-radius:8px;letter-spacing:0.2em;margin:1em 0 1.5em 0;font-weight:bold;">${code}</div>
+      <p style="color:#444;font-size:1em;">Enter this code in the FTP Web Client to verify your account.<br>Do not share this code with anyone.</p>
+      <p style="color:#888;font-size:0.98em;margin-top:2em;">If you did not request this, you can ignore this email.</p>
+    </div>
+  `;
+  return mailjet
+    .post('send', { version: 'v3.1' })
+    .request({
+      Messages: [
+        {
+          From: { Email: MAILJET_FROM, Name: 'FTP Web Client' },
+          To: [{ Email: email }],
+          Subject: 'Verify your FTP Web Client account',
+          HTMLPart: html
+        }
+      ]
+    });
+}
+
 // Register (store both plain and hash for demo, NOT for production, and set default limitGB)
-app.post('/api/register', (req, res) => {
+app.post('/api/register', async (req, res) => {
   const settings = loadSettings();
   if (settings.allowRegister === false) return res.status(403).json({ error: 'Registration disabled' });
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
+  const { username, password, email } = req.body;
+  if (!username || !password || !email) return res.status(400).json({ error: 'Missing fields' });
   // Only allow lowercase letters and numbers for usernames
   if (!/^[a-z0-9]+$/.test(username)) {
     return res.status(400).json({ error: 'Username must be lowercase letters and numbers only (no spaces, capitals, or special characters).' });
   }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return res.status(400).json({ error: 'Invalid email address.' });
+  }
   const users = loadUsers();
   if (users[username]) return res.status(400).json({ error: 'User exists' });
-  const hash = bcrypt.hashSync(password, 10);
-  // Use settings.defaultUserRole and settings.maxUsers
   if (Object.keys(users).length >= (settings.maxUsers || 100)) {
     return res.status(400).json({ error: 'User limit reached' });
   }
-  users[username] = { password: hash, plain: password, role: settings.defaultUserRole || 'user', enabled: true, limitGB: 5 };
+  // Generate verification code and timestamp
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const now = Date.now();
+  users[username] = {
+    password: bcrypt.hashSync(password, 10),
+    plain: password,
+    role: settings.defaultUserRole || 'user',
+    enabled: true,
+    limitGB: 5,
+    email,
+    verified: false,
+    verificationCode: code,
+    verificationSent: now,
+    approval: false,
+    paused: false
+  };
   saveUsers(users);
   const userDir = path.join(STORAGE_DIR, username);
   if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+  // Send verification email
+  try {
+    await sendVerificationEmail(email, username, code);
+    res.json({ success: true, message: 'Verification email sent. Please check your email.' });
+  } catch (e) {
+    // If email fails, delete user
+    delete users[username];
+    saveUsers(users);
+    res.status(500).json({ error: 'Failed to send verification email.' });
+  }
+});
+
+// Verification endpoint
+app.get('/api/verify-account', (req, res) => {
+  const { username, code } = req.query;
+  if (!username || !code) return res.status(400).json({ error: 'Missing username or code' });
+  const users = loadUsers();
+  const user = users[username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.verified) return res.json({ success: true, message: 'Already verified.' });
+  const now = Date.now();
+  if (!user.verificationCode || !user.verificationSent || user.verificationCode !== code) {
+    return res.status(400).json({ error: 'Invalid verification code.' });
+  }
+  if (now - user.verificationSent > 72 * 3600 * 1000) {
+    // Expired
+    delete users[username];
+    saveUsers(users);
+    return res.status(400).json({ error: 'Verification expired. Account deleted.' });
+  }
+  user.verified = true;
+  user.approval = false; // Needs admin/owner approval
+  user.verificationCode = undefined;
+  user.verificationSent = undefined;
+  saveUsers(users);
+  res.json({ success: true, message: 'Account verified. Awaiting approval by admin/owner.' });
+});
+
+// POST endpoint for code verification (for frontend form)
+app.post('/api/verify-account', (req, res) => {
+  const { username, code } = req.body;
+  if (!username || !code) return res.status(400).json({ error: 'Missing username or code' });
+  const users = loadUsers();
+  const user = users[username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.verified) return res.json({ success: true, message: 'Already verified.' });
+  const now = Date.now();
+  if (!user.verificationCode || !user.verificationSent || user.verificationCode !== code) {
+    return res.status(400).json({ error: 'Invalid verification code.' });
+  }
+  if (now - user.verificationSent > 72 * 3600 * 1000) {
+    // Expired
+    delete users[username];
+    saveUsers(users);
+    return res.status(400).json({ error: 'Verification expired. Account deleted.' });
+  }
+  user.verified = true;
+  user.approval = false; // Needs admin/owner approval
+  user.verificationCode = undefined;
+  user.verificationSent = undefined;
+  saveUsers(users);
+  res.json({ success: true, message: 'Account verified. Awaiting approval by admin/owner.' });
+});
+
+// Scheduled cleanup for unverified accounts (run every hour)
+setInterval(() => {
+  const users = loadUsers();
+  let changed = false;
+  const now = Date.now();
+  for (const [username, user] of Object.entries(users)) {
+    if (!user.verified && user.verificationSent && now - user.verificationSent > 72 * 3600 * 1000) {
+      delete users[username];
+      changed = true;
+    }
+  }
+  if (changed) saveUsers(users);
+}, 3600 * 1000);
+
+// Ban/unban user (admin)
+app.post('/api/admin/user-ban', auth('owner'), (req, res) => {
+  const { username, bannedUntil, banReason } = req.body;
+  if (!username) return res.status(400).json({ error: 'Missing username' });
+  const users = loadUsers();
+  if (!users[username]) return res.status(404).json({ error: 'User not found' });
+  if (bannedUntil) {
+    users[username].bannedUntil = bannedUntil;
+    users[username].banReason = banReason || '';
+  } else {
+    users[username].bannedUntil = undefined;
+    users[username].banReason = undefined;
+  }
+  saveUsers(users);
   res.json({ success: true });
 });
 
-// Login (respect allowLogin, user enabled)
+// Ban check middleware for login and protected endpoints
+function isUserBanned(user) {
+  if (!user || !user.bannedUntil) return false;
+  const now = Date.now();
+  return now < Number(user.bannedUntil);
+}
+
+// Update login to check verified, approval, paused, and ban
 app.post('/api/login', (req, res) => {
   const settings = loadSettings();
   if (settings.allowLogin === false) return res.status(403).json({ error: 'Login disabled' });
@@ -222,8 +375,34 @@ app.post('/api/login', (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.password)) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
-  if (user.enabled === false && user.role !== 'owner') {
-    return res.status(403).json({ error: 'User disabled' });
+  // Ban check
+  if (isUserBanned(user)) {
+    const msLeft = Number(user.bannedUntil) - Date.now();
+    const sec = Math.floor(msLeft / 1000) % 60;
+    const min = Math.floor(msLeft / 60000) % 60;
+    const hr = Math.floor(msLeft / 3600000) % 24;
+    const day = Math.floor(msLeft / 86400000);
+    let timeStr = '';
+    if (day > 0) timeStr += day + 'd ';
+    if (hr > 0) timeStr += hr + 'h ';
+    if (min > 0) timeStr += min + 'm ';
+    if (sec > 0) timeStr += sec + 's';
+    return res.status(403).json({ error: `You are banned for ${timeStr.trim()}. Reason: ${user.banReason || 'No reason given.'}` });
+  }
+  // Skip verified/approval checks for owner
+  if (user.role !== 'owner') {
+    if (!user.verified) {
+      return res.status(403).json({ error: 'Account not verified. Please check your email.' });
+    }
+    if (!user.approval) {
+      return res.status(403).json({ error: 'Account not approved yet. Please wait for admin/owner approval.' });
+    }
+    if (user.enabled === false) {
+      return res.status(403).json({ error: 'User disabled' });
+    }
+    if (user.paused) {
+      return res.status(403).json({ error: 'Account paused. You can only download your files.' });
+    }
   }
   const token = jwt.sign({ username, role: user.role }, JWT_SECRET);
   res.json({ token, role: user.role });
@@ -549,3 +728,59 @@ function startFtpServer() {
 ensureOwner();
 startServer();
 startFtpServer();
+
+// Resend verification code endpoint
+app.post('/api/resend-verification', async (req, res) => {
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ error: 'Missing username' });
+  const users = loadUsers();
+  const user = users[username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.verified) return res.status(400).json({ error: 'Already verified' });
+  // Generate new code and update timestamp
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  user.verificationCode = code;
+  user.verificationSent = Date.now();
+  saveUsers(users);
+  try {
+    await sendVerificationEmail(user.email, username, code);
+    res.json({ success: true, message: 'Verification email resent.' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to resend verification email.' });
+  }
+});
+
+// Manual verify/unverify user
+app.post('/api/admin/user-verify', auth('owner'), (req, res) => {
+  const { username, verified } = req.body;
+  if (!username || typeof verified !== 'boolean') return res.status(400).json({ error: 'Missing fields' });
+  const users = loadUsers();
+  if (!users[username]) return res.status(404).json({ error: 'User not found' });
+  users[username].verified = verified;
+  if (verified) {
+    users[username].verificationCode = undefined;
+    users[username].verificationSent = undefined;
+  }
+  saveUsers(users);
+  res.json({ success: true });
+});
+// Manual approve/unapprove user
+app.post('/api/admin/user-approve', auth('owner'), (req, res) => {
+  const { username, approval } = req.body;
+  if (!username || typeof approval !== 'boolean') return res.status(400).json({ error: 'Missing fields' });
+  const users = loadUsers();
+  if (!users[username]) return res.status(404).json({ error: 'User not found' });
+  users[username].approval = approval;
+  saveUsers(users);
+  res.json({ success: true });
+});
+// Manual pause/unpause user
+app.post('/api/admin/user-pause', auth('owner'), (req, res) => {
+  const { username, paused } = req.body;
+  if (!username || typeof paused !== 'boolean') return res.status(400).json({ error: 'Missing fields' });
+  const users = loadUsers();
+  if (!users[username]) return res.status(404).json({ error: 'User not found' });
+  users[username].paused = paused;
+  saveUsers(users);
+  res.json({ success: true });
+});
